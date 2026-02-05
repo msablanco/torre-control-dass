@@ -35,7 +35,7 @@ def load_data_from_drive():
                 status, done = downloader.next_chunk()
             fh.seek(0)
             name = item['name'].replace('.csv', '')
-            dfs[name] = pd.read_csv(fh)
+            dfs[name] = pd.read_csv(fh, encoding='latin-1')
         return dfs
     except Exception as e:
         st.error(f"Error conectando a Drive: {e}")
@@ -163,4 +163,5 @@ if data:
                 st.write(response.text)
 
 else:
+
     st.error("No se pudieron cargar los datos. Verifica los permisos de la Service Account en Google Drive.")
