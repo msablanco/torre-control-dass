@@ -72,3 +72,5 @@ if data and all(k in data for k in ['Stock', 'Maestro_Productos', 'Sell_out']):
     st.dataframe(df_f[['SKU', 'Cliente', 'Ubicacion', 'Stock_Actual', 'VPS', 'WOS']], use_container_width=True)
 else:
     st.info("Buscando archivos en Drive... Asegúrate de que se llamen Stock.csv, Maestro_Productos.csv y Sell_out.csv")
+    st.info("Buscando archivos en Drive... Asegúrate de que se llamen Stock.csv, Maestro_Productos.csv y Sell_out.csv")
+
