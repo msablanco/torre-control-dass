@@ -5,7 +5,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
 
-st.set_page_config(page_title="Dass Performance v5.0", layout="wide", page_icon="👟")
+st.set_page_config(page_title="Dass Performance v5.1", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -28,94 +28,91 @@ def load_data():
             done = False
             while not done: _, done = downloader.next_chunk()
             fh.seek(0)
-            
-            # Cargamos como string para evitar errores de tipo de dato (AttributeError)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
-            # Limpieza de encabezados
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
-        st.error(f"Error en carga: {e}")
+        st.error(f"Error: {e}")
         return None
 
 data = load_data()
 
 if data:
-    # 1. BASE: Maestro de Productos
-    df_final = data.get('Maestro_Productos', pd.DataFrame()).copy()
+    # --- 1. PROCESAMIENTO Y UNIFICACIÓN ---
+    # Maestro como base
+    df_base = data.get('Maestro_Productos', pd.DataFrame()).copy()
     
-    # Función para convertir a número de forma segura
-    def to_num(df, col):
-        if col in df.columns:
-            return pd.to_numeric(df[col], errors='coerce').fillna(0)
-        return 0
+    def prep_num(df, col_name, val_name):
+        if df is not None and col_name in df.columns:
+            temp = df.copy()
+            temp[val_name] = pd.to_numeric(temp[col_name], errors='coerce').fillna(0)
+            # AGRUPAMOS POR SKU PARA UNIFICAR FILAS REPETIDAS
+            return temp.groupby('SKU')[val_name].sum().reset_index()
+        return pd.DataFrame(columns=['SKU', val_name])
 
-    # 2. UNIFICACIÓN DE SELL IN Y SELL OUT
-    if 'Sell_out' in data:
-        so = data['Sell_out'].copy()
-        so['Cant'] = to_num(so, 'Unidades')
-        so_grouped = so.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out'})
-        df_final = df_final.merge(so_grouped, on='SKU', how='left')
-
-    if 'Sell_in' in data:
-        si = data['Sell_in'].copy()
-        si['Cant'] = to_num(si, 'Unidades')
-        si_grouped = si.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In'})
-        df_final = df_final.merge(si_grouped, on='SKU', how='left')
-
-    # 3. LÓGICA DE STOCKS (Dass vs Clientes)
-    if 'Stock' in data:
-        stk = data['Stock'].copy()
-        stk['Cant'] = to_num(stk, 'Cantidad')
-        stk['Ubicacion'] = stk['Ubicacion'].fillna('SIN DATOS').astype(str).str.upper()
-        
-        # Filtramos por palabra clave para identificar stock propio de Dass
-        mask_dass = stk['Ubicacion'].str.contains('DASS|DEPOSITO|CENTRAL', na=False)
-        
-        stk_dass = stk[mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
-        stk_cli = stk[~mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
-        
-        df_final = df_final.merge(stk_dass, on='SKU', how='left').merge(stk_cli, on='SKU', how='left')
-
-    # 4. LIMPIEZA Y FORMATO
-    df_final = df_final.fillna(0)
+    # Unificamos Sell In, Sell Out y Stocks
+    si = prep_num(data.get('Sell_in'), 'Unidades', 'Sell In')
+    so = prep_num(data.get('Sell_out'), 'Unidades', 'Sell Out')
     
-    # Estructura exacta solicitada
-    cols_layout = ['SKU', 'Descripcion', 'Disciplina', 'Color', 'Genero', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass']
-    # Filtrar solo columnas que realmente existan para evitar errores
-    df_display = df_final[[c for c in cols_layout if c in df_final.columns]]
+    # Procesar Stock separando Ubicaciones
+    stk_df = data.get('Stock')
+    if stk_df is not None:
+        stk_df['Cant'] = pd.to_numeric(stk_df['Cantidad'], errors='coerce').fillna(0)
+        stk_df['Ubicacion'] = stk_df['Ubicacion'].astype(str).str.upper()
+        
+        mask_dass = stk_df['Ubicacion'].str.contains('DASS|DEPOSITO|CENTRAL', na=False)
+        stk_dass = stk_df[mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+        stk_cli = stk_df[~mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
+    else:
+        stk_dass = stk_cli = pd.DataFrame(columns=['SKU', 'Stock Dass'])
 
-    # --- INTERFAZ STREAMLIT ---
-    st.title("👟 Performance Dashboard - Calzado v5.0")
+    # MERGE FINAL
+    df_final = df_base.merge(si, on='SKU', how='left').merge(so, on='SKU', how='left')
+    df_final = df_final.merge(stk_dass, on='SKU', how='left').merge(stk_cli, on='SKU', how='left').fillna(0)
+
+    # --- 2. CÁLCULO DE COLUMNAS DE INTELIGENCIA ---
+    # Sell Through = (Sell Out / Sell In) * 100
+    df_final['Sell Through %'] = (df_final['Sell Out'] / df_final['Sell In'] * 100).replace([float('inf'), -float('inf')], 0).fillna(0)
     
-    # Filtros en Sidebar
-    st.sidebar.header("Filtros Globales")
-    for col_filtro in ['Disciplina', 'Genero', 'Color']:
-        if col_filtro in df_display.columns:
-            lista = sorted(df_display[col_filtro].unique())
-            seleccion = st.sidebar.multiselect(f"Filtrar {col_filtro}", lista)
-            if seleccion:
-                df_display = df_display[df_display[col_filtro].isin(seleccion)]
+    # Rotación (WOS) = Stock Clientes / (Sell Out / 4) -> Semanas de inventario
+    df_final['Rotacion (Meses)'] = (df_final['Stock Clientes'] / df_final['Sell Out']).replace([float('inf'), -float('inf')], 0).fillna(0)
 
-    # Tabla Principal
-    st.subheader("Análisis Consolidado de Inventario")
+    # --- 3. INTERFAZ Y FILTROS SUPERIORES ---
+    st.title("👟 Performance Dashboard Dass v5.1")
+    
+    # Filtros arriba
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        # Si tienes columna Cliente en alguno de los archivos, podrías traerla al maestro o filtrar aquí
+        filtro_sku = st.multiselect("Filtrar por Disciplina", sorted(df_final['Disciplina'].unique()) if 'Disciplina' in df_final.columns else [])
+    
+    if filtro_sku:
+        df_final = df_final[df_final['Disciplina'].isin(filtro_sku)]
+
+    # TABLA CONSOLIDADA
+    st.subheader("Análisis Consolidado por SKU")
+    
+    columnas_orden = ['SKU', 'Descripcion', 'Disciplina', 'Color', 'Genero', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %', 'Rotacion (Meses)']
+    df_display = df_final[[c for c in columnas_orden if c in df_final.columns]]
+
     st.dataframe(
         df_display.style.format({
             'Sell In': '{:,.0f}', 'Sell Out': '{:,.0f}',
-            'Stock Clientes': '{:,.0f}', 'Stock Dass': '{:,.0f}'
+            'Stock Clientes': '{:,.0f}', 'Stock Dass': '{:,.0f}',
+            'Sell Through %': '{:.1f}%', 'Rotacion (Meses)': '{:.2f} m'
         }),
-        use_container_width=True,
-        height=600
+        use_container_width=True, height=500
     )
 
-    # Resumen de Totales
-    st.markdown("---")
-    t1, t2, t3, t4 = st.columns(4)
-    t1.metric("Sell In Total", f"{df_display['Sell In'].sum():,.0f}")
-    t2.metric("Sell Out Total", f"{df_display['Sell Out'].sum():,.0f}")
-    t3.metric("Stock en Mercado", f"{df_display['Stock Clientes'].sum():,.0f}")
-    t4.metric("Stock en Dass", f"{df_display['Stock Dass'].sum():,.0f}")
+    # Resumen inferior
+    st.divider()
+    m1, m2, m3 = st.columns(3)
+    total_si = df_display['Sell In'].sum()
+    total_so = df_display['Sell Out'].sum()
+    m1.metric("Sell In Total", f"{total_si:,.0f}")
+    m2.metric("Sell Out Total", f"{total_so:,.0f}")
+    m3.metric("Sell Through Global", f"{(total_so/total_si*100 if total_si>0 else 0):.1f}%")
 
 else:
-    st.warning("Aguardando carga de datos desde Google Drive...")
+    st.warning("Cargando datos...")
