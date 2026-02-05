@@ -32,20 +32,20 @@ def load_data():
             fh.seek(0)
             name = item['name'].replace('.csv', '')
             
-            # Lectura optimizada para archivos grandes
+            # Carga optimizada
             df_temp = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', on_bad_lines='skip')
             
-            # LIMPIEZA DE COLUMNAS: Quitamos tildes y espacios (Ubicación -> Ubicacion)
+            # --- LIMPIEZA DE COLUMNAS (Soluciona el error 'Ubicacion') ---
             df_temp.columns = (df_temp.columns.str.strip()
                                .str.replace('ó', 'o').str.replace('á', 'a')
                                .str.replace('é', 'e').str.replace('í', 'i')
                                .str.replace('ú', 'u'))
             
-            # Si es el Sell_out de 200k filas, lo resumimos de inmediato para liberar memoria
+            # Si es el Sell_out de 200k filas, lo agrupamos YA para que sea liviano
             if 'Sell_out' in name:
                 df_temp = df_temp.groupby(['SKU', 'Cliente', 'Ubicacion'])['Unidades'].sum().reset_index()
                 df_temp['VPS'] = df_temp['Unidades'] / 4
-                name = 'Sell_out' # Normalizar nombre
+                name = 'Sell_out'
             
             dfs[name] = df_temp
         return dfs
@@ -55,42 +55,39 @@ def load_data():
 
 data = load_data()
 
-# Validamos que los archivos básicos estén presentes
 if data and all(k in data for k in ['Stock', 'Maestro_Productos', 'Sell_out']):
-    # Ajuste de nombres según tus capturas (Cantidad -> Stock_Actual)
+    # Normalizamos el nombre de la columna 'Cantidad' a 'Stock_Actual'
     df_stock = data['Stock'].rename(columns={'Cantidad': 'Stock_Actual'})
     
-    # Unificación de tablas (Merge)
+    # Unificación de datos
     df = df_stock.merge(data['Maestro_Productos'], on='SKU', how='left')
     df = df.merge(data['Sell_out'][['SKU', 'Cliente', 'Ubicacion', 'VPS']], 
                   on=['SKU', 'Cliente', 'Ubicacion'], how='left').fillna(0)
     
-    # Cálculo de Semanas de Inventario (WOS)
+    # Cálculo de WOS
     df['WOS'] = df.apply(lambda x: x['Stock_Actual'] / x['VPS'] if x['VPS'] > 0 else 99, axis=1)
 
-    # --- DASHBOARD ---
+    # --- INTERFAZ ---
     st.title("👟 Torre de Control Dass")
     
-    # Filtros laterales para fluidez
-    st.sidebar.header("Filtros de Datos")
+    # Filtros laterales
     clientes = sorted(df['Cliente'].unique())
-    f_cliente = st.sidebar.multiselect("Seleccionar Cliente", clientes, default=clientes[:1] if clientes else [])
+    f_cliente = st.sidebar.multiselect("Filtrar por Cliente", clientes, default=clientes[:2] if clientes else [])
     
     df_f = df[df['Cliente'].isin(f_cliente)] if f_cliente else df
 
-    # Métricas principales
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Stock Físico", f"{df_f['Stock_Actual'].sum():,.0f}")
-    m2.metric("Venta Semanal (Prom)", f"{df_f['VPS'].sum():,.0f}")
-    m3.metric("WOS Promedio", f"{df_f['WOS'].replace(99, 0).mean():.1f} sem")
+    # KPIs
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Stock Total", f"{df_f['Stock_Actual'].sum():,.0f}")
+    c2.metric("Venta Semanal", f"{df_f['VPS'].sum():,.0f}")
+    c3.metric("WOS Promedio", f"{df_f['WOS'].replace(99, 0).mean():.1f}")
 
-    # Tabla de resultados
-    st.subheader("📋 Inventario Detallado")
+    # Tabla Principal
     st.dataframe(df_f[['SKU', 'Cliente', 'Ubicacion', 'Stock_Actual', 'VPS', 'WOS']], use_container_width=True)
 
-    # Chat con la IA
+    # IA (Gemini)
     st.divider()
-    prompt = st.chat_input("Pregunta a la IA: ¿Qué SKUs tienen sobrestock?")
+    prompt = st.chat_input("Pregúntale a la IA sobre estos datos...")
     if prompt:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -98,4 +95,4 @@ if data and all(k in data for k in ['Stock', 'Maestro_Productos', 'Sell_out']):
         resp = model.generate_content(f"Datos Dass:\n{contexto}\nPregunta: {prompt}")
         st.info(resp.text)
 else:
-    st.warning("⚠️ Asegúrate de que los archivos en Drive se llamen: Stock.csv, Maestro_Productos.csv y Sell_out.csv")
+    st.warning("Revisa que los archivos en Drive se llamen: Stock.csv, Maestro_Productos.csv y Sell_out.csv")
