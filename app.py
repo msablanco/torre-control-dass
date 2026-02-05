@@ -28,111 +28,106 @@ def load_data():
             done = False
             while not done: _, done = downloader.next_chunk()
             fh.seek(0)
+            # Leer como string para evitar errores de tipo
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
-        st.error(f"Error en carga: {e}")
+        st.error(f"Error de conexión: {e}")
         return None
 
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO CON UNIFICACIÓN POR SKU ---
-    # Usamos el Maestro como base de atributos
-    df_maestro = data.get('Maestro_Productos', pd.DataFrame()).copy()
+    # 1. PREPARACIÓN DE BASES
+    maestro = data.get('Maestro_Productos', pd.DataFrame()).copy()
     
-    # Procesar Sell In (Ingresos)
+    # Procesar Sell In (Ingresos) y mapear Clientes
     si_raw = data.get('Sell_in', pd.DataFrame())
     if not si_raw.empty:
         si_raw['Unidades'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
-        # Guardamos mapeo de Cliente por SKU (tomamos el primero que aparezca)
-        clientes_map = si_raw.groupby('SKU')['Cliente'].first().reset_index()
-        si_grouped = si_raw.groupby('SKU')['Unidades'].sum().reset_index().rename(columns={'Unidades': 'Sell In'})
+        # Extraemos clientes por SKU
+        cli_map = si_raw.groupby('SKU')['Cliente'].first().reset_index()
+        si_grp = si_raw.groupby('SKU')['Unidades'].sum().reset_index().rename(columns={'Unidades': 'Sell In'})
     else:
-        clientes_map = pd.DataFrame(columns=['SKU', 'Cliente'])
-        si_grouped = pd.DataFrame(columns=['SKU', 'Sell In'])
+        cli_map = pd.DataFrame(columns=['SKU', 'Cliente'])
+        si_grp = pd.DataFrame(columns=['SKU', 'Sell In'])
 
     # Procesar Sell Out
     so_raw = data.get('Sell_out', pd.DataFrame())
+    so_grp = pd.DataFrame(columns=['SKU', 'Sell Out'])
     if not so_raw.empty:
         so_raw['Unidades'] = pd.to_numeric(so_raw['Unidades'], errors='coerce').fillna(0)
-        so_grouped = so_raw.groupby('SKU')['Unidades'].sum().reset_index().rename(columns={'Unidades': 'Sell Out'})
-    else:
-        so_grouped = pd.DataFrame(columns=['SKU', 'Sell Out'])
+        so_grp = so_raw.groupby('SKU')['Unidades'].sum().reset_index().rename(columns={'Unidades': 'Sell Out'})
 
-    # Procesar Stocks
+    # Procesar Stocks (Dass vs Clientes)
     stk_raw = data.get('Stock', pd.DataFrame())
+    stk_d = pd.DataFrame(columns=['SKU', 'Stock Dass'])
+    stk_c = pd.DataFrame(columns=['SKU', 'Stock Clientes'])
     if not stk_raw.empty:
-        stk_raw['Cantidad'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
+        stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
         stk_raw['Ubicacion'] = stk_raw['Ubicacion'].astype(str).str.upper()
-        mask_dass = stk_raw['Ubicacion'].str.contains('DASS|CENTRAL|DEPOSITO', na=False)
-        
-        st_dass = stk_raw[mask_dass].groupby('SKU')['Cantidad'].sum().reset_index().rename(columns={'Cantidad': 'Stock Dass'})
-        st_cli = stk_raw[~mask_dass].groupby('SKU')['Cantidad'].sum().reset_index().rename(columns={'Cantidad': 'Stock Clientes'})
-    else:
-        st_dass = st_cli = pd.DataFrame(columns=['SKU', 'Stock Dass', 'Stock Clientes'])
+        mask = stk_raw['Ubicacion'].str.contains('DASS|CENTRAL|DEPOSITO', na=False)
+        stk_d = stk_raw[mask].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+        stk_c = stk_raw[~mask].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
 
-    # --- 2. ENSAMBLE FINAL ---
-    df = df_maestro.merge(clientes_map, on='SKU', how='left')
-    df = df.merge(si_grouped, on='SKU', how='left').merge(so_grouped, on='SKU', how='left')
-    df = df.merge(st_dass, on='SKU', how='left').merge(st_cli, on='SKU', how='left')
+    # 2. UNIFICACIÓN TOTAL
+    df = maestro.merge(cli_map, on='SKU', how='left')
+    df = df.merge(si_grp, on='SKU', how='left').merge(so_grp, on='SKU', how='left')
+    df = df.merge(stk_d, on='SKU', how='left').merge(stk_c, on='SKU', how='left')
     
-    # Limpieza absoluta de nulos antes de calcular
+    # Limpiar nulos para evitar errores de Streamlit
     df = df.fillna(0)
 
-    # --- 3. CÁLCULOS DE PERFORMANCE ---
+    # 3. CÁLCULOS
     df['Ingresos'] = df['Sell In']
-    # Sell Through = (Vendido / Ingresado)
     df['Sell Through %'] = df.apply(lambda x: (x['Sell Out'] / x['Sell In'] * 100) if x['Sell In'] > 0 else 0, axis=1)
-    # Rotación = Stock Clientes / Sell Out (Meses)
+    # Rotación: Stock Clientes / Sell Out (Meses de cobertura en la calle)
     df['Rotacion'] = df.apply(lambda x: (x['Stock Clientes'] / x['Sell Out']) if x['Sell Out'] > 0 else 0, axis=1)
 
-    # --- 4. FILTROS SUPERIORES ---
+    # 4. FILTROS SUPERIORES
     st.title("👟 Performance Dass v5.3")
     
-    c_f1, c_f2 = st.columns(2)
-    with c_f1:
-        clientes_list = sorted([str(x) for x in df['Cliente'].unique() if x != 0])
-        f_cli = st.multiselect("Seleccionar Clientes", clientes_list)
-    with c_f2:
-        disc_list = sorted([str(x) for x in df['Disciplina'].unique() if x != 0])
-        f_dis = st.multiselect("Seleccionar Disciplina", disc_list)
+    f1, f2 = st.columns(2)
+    with f1:
+        u_clientes = sorted([str(x) for x in df['Cliente'].unique() if x != 0 and x != '0'])
+        sel_cli = st.multiselect("Filtrar por Clientes", u_clientes)
+    with f2:
+        u_disc = sorted([str(x) for x in df['Disciplina'].unique() if x != 0 and x != '0'])
+        sel_disc = st.multiselect("Filtrar por Disciplina", u_disc)
 
-    # Aplicar filtros
-    if f_cli: df = df[df['Cliente'].isin(f_cli)]
-    if f_dis: df = df[df['Disciplina'].isin(f_dis)]
+    if sel_cli: df = df[df['Cliente'].isin(sel_cli)]
+    if sel_disc: df = df[df['Disciplina'].isin(sel_disc)]
 
-    # --- 5. VISUALIZACIÓN ---
-    st.subheader("📊 Análisis Unificado por SKU")
+    # 5. TABLA FINAL
+    st.subheader("📊 Análisis Consolidado por SKU")
     
-    columnas_finales = ['SKU', 'Descripcion', 'Disciplina', 'Color', 'Genero', 'Ingresos', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %', 'Rotacion']
-    df_view = df[[c for c in columnas_finales if c in df.columns]].copy()
+    cols = ['SKU', 'Descripcion', 'Disciplina', 'Color', 'Genero', 'Ingresos', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %', 'Rotacion']
+    df_view = df[[c for c in cols if c in df.columns]].copy()
 
-    # Convertimos a tipos correctos para evitar errores de Styler
-    cols_num = ['Ingresos', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %', 'Rotacion']
-    for cn in cols_num:
-        if cn in df_view.columns:
-            df_view[cn] = pd.to_numeric(df_view[cn], errors='coerce').fillna(0)
+    # Asegurar tipos numéricos antes de formatear
+    num_cols = ['Ingresos', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %', 'Rotacion']
+    for nc in num_cols:
+        if nc in df_view.columns:
+            df_view[nc] = pd.to_numeric(df_view[nc], errors='coerce').fillna(0)
 
-    # Formateo Manual (Más seguro que .style.format para grandes volúmenes)
     st.dataframe(
         df_view.style.format({
             'Ingresos': '{:,.0f}', 'Sell In': '{:,.0f}', 'Sell Out': '{:,.0f}',
             'Stock Clientes': '{:,.0f}', 'Stock Dass': '{:,.0f}',
             'Sell Through %': '{:.1f}%', 'Rotacion': '{:.2f} m'
         }),
-        use_container_width=True, height=500
+        use_container_width=True, height=600
     )
 
-    # Totales
+    # Resumen inferior
     st.divider()
-    t1, t2, t3, t4 = st.columns(4)
-    t1.metric("Sell In Total", f"{df_view['Sell In'].sum():,.0f}")
-    t2.metric("Sell Out Total", f"{df_view['Sell Out'].sum():,.0f}")
-    t3.metric("Stock Dass", f"{df_view['Stock Dass'].sum():,.0f}")
-    t4.metric("Stock Clientes", f"{df_view['Stock Clientes'].sum():,.0f}")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Sell In", f"{df_view['Sell In'].sum():,.0f}")
+    k2.metric("Sell Out", f"{df_view['Sell Out'].sum():,.0f}")
+    k3.metric("Stock Dass", f"{df_view['Stock Dass'].sum():,.0f}")
+    k4.metric("Stock Mercado", f"{df_view['Stock Clientes'].sum():,.0f}")
 
 else:
-    st.info("Buscando archivos en Drive...")
+    st.info("Cargando archivos desde Google Drive...")
