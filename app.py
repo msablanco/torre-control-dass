@@ -11,7 +11,7 @@ import plotly.express as px
 st.set_page_config(page_title="Torre de Control Dass", layout="wide", page_icon="👟")
 
 # --- CONEXIÓN A GOOGLE DRIVE ---
-@st.cache_data(ttl=3600)  # Cache de 1 hora para no saturar la API
+@st.cache_data(ttl=600)  # Cache de 10 min para permitir actualizaciones rápidas
 def load_data_from_drive():
     try:
         info = st.secrets["gcp_service_account"]
@@ -35,7 +35,12 @@ def load_data_from_drive():
                 status, done = downloader.next_chunk()
             fh.seek(0)
             name = item['name'].replace('.csv', '')
-            dfs[name] = pd.read_csv(fh, encoding='latin-1')
+            
+            # MEJORA CLAVE: Lectura robusta para archivos de Excel (Latin-1 y separador automático)
+            try:
+                dfs[name] = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', on_bad_lines='skip')
+            except Exception as e:
+                st.error(f"Error procesando {item['name']}: {e}")
         return dfs
     except Exception as e:
         st.error(f"Error conectando a Drive: {e}")
@@ -44,124 +49,65 @@ def load_data_from_drive():
 # --- PROCESAMIENTO DE DATOS ---
 data = load_data_from_drive()
 
-if data:
-    # 1. Preparar Sell Out y VPS (Venta Promedio Semanal)
-    # Agrupamos por SKU, Cliente y Ubicación para tener la granularidad total
+if data and all(k in data for k in ['Stock', 'Maestro_Productos', 'Sell_out']):
+    # Limpieza de columnas (quitar espacios en blanco si los hay)
+    for k in data: data[k].columns = data[k].columns.str.strip()
+
+    # 1. Sell Out y VPS
     df_out = data['Sell_out']
     vps = df_out.groupby(['SKU', 'Cliente', 'Ubicacion'])['Unidades'].sum() / 4
     vps = vps.reset_index().rename(columns={'Unidades': 'VPS'})
 
-    # 2. Cruce Maestro (Unificar Stock + Maestro + Ventas + Ingresos)
-    # Empezamos por Stock para asegurar que vemos lo que hay en depósito
+    # 2. Unificación
     df = data['Stock'].merge(data['Maestro_Productos'], on='SKU', how='left')
     df = df.merge(vps, on=['SKU', 'Cliente', 'Ubicacion'], how='left').fillna(0)
     
-    # Agregar Ingresos Futuros (A nivel SKU, ya que son compras generales)
     if 'Ingresos' in data:
+        data['Ingresos'].columns = data['Ingresos'].columns.str.strip()
         ingresos_sum = data['Ingresos'].groupby('SKU')['Cantidad'].sum().reset_index()
         df = df.merge(ingresos_sum, on='SKU', how='left').rename(columns={'Cantidad_x': 'Stock_Actual', 'Cantidad_y': 'Ingresos_Futuros'}).fillna(0)
 
-    # 3. Lógica de Canales
-    def categorizar_canal(ubi):
-        ubi = str(ubi).upper()
-        if 'MAYORISTA' in ubi: return 'Mayorista'
-        if 'ECOM' in ubi or 'WEB' in ubi: return 'E-com'
-        return 'Retail'
+    # 3. Canales
+    df['Canal'] = df['Ubicacion'].apply(lambda x: 'Mayorista' if 'MAYORISTA' in str(x).upper() else ('E-com' if any(w in str(x).upper() for w in ['ECOM', 'WEB']) else 'Retail'))
     
-    df['Canal'] = df['Ubicacion'].apply(categorizar_canal)
-    
-    # 4. Cálculo de Cobertura (WOS)
-    # Si la venta es 0, asignamos 99 semanas para evitar errores infinitos
+    # 4. WOS
     df['WOS'] = df.apply(lambda x: x['Stock_Actual'] / x['VPS'] if x['VPS'] > 0 else 99, axis=1)
 
-    # --- INTERFAZ: SIDEBAR FILTROS ---
-    st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Information_icon.svg/1200px-Information_icon.svg.png", width=50) # Icono decorativo
+    # --- SIDEBAR ---
     st.sidebar.title("Filtros de Control")
-    
-    if st.sidebar.button("🔄 Actualizar Datos de Drive"):
+    if st.sidebar.button("🔄 Sincronizar Drive"):
         st.cache_data.clear()
         st.rerun()
 
     f_canal = st.sidebar.multiselect("Canal", df['Canal'].unique(), default=df['Canal'].unique())
     f_cliente = st.sidebar.multiselect("Cliente", df['Cliente'].unique(), default=df['Cliente'].unique())
-    f_disciplina = st.sidebar.multiselect("Disciplina", df['Disciplina'].unique(), default=df['Disciplina'].unique())
-    f_sku = st.sidebar.text_input("Buscador (SKU, Descripción, Cliente)")
+    f_disciplina = st.sidebar.multiselect("Disciplina", df['Disciplina'].unique() if 'Disciplina' in df.columns else [], default=df['Disciplina'].unique() if 'Disciplina' in df.columns else [])
+    f_sku = st.sidebar.text_input("Buscador SKU/Desc")
 
-    # Aplicar filtros al DataFrame
-    query = (df['Canal'].isin(f_canal)) & (df['Cliente'].isin(f_cliente)) & (df['Disciplina'].isin(f_disciplina))
-    df_f = df[query]
-    
-    if f_sku:
-        df_f = df_f[df_f.apply(lambda r: f_sku.lower() in str(r).lower(), axis=1)]
+    # Filtrado
+    df_f = df[(df['Canal'].isin(f_canal)) & (df['Cliente'].isin(f_cliente))]
+    if f_disciplina: df_f = df_f[df_f['Disciplina'].isin(f_disciplina)]
+    if f_sku: df_f = df_f[df_f.apply(lambda r: f_sku.lower() in str(r).lower(), axis=1)]
 
-    # --- KPIs PRINCIPALES ---
-    st.title("👟 Torre de Control Dass: Inventarios")
+    # --- DASHBOARD ---
+    st.title("👟 Torre de Control Dass")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Stock Físico", f"{df_f['Stock_Actual'].sum():,.0f}")
-    c2.metric("Venta Semanal (Sell Out)", f"{df_f['VPS'].sum():,.0f}")
-    c3.metric("WOS Promedio", f"{df_f['WOS'].replace(99, 0).mean():.1f} sem")
-    c4.metric("Ingresos Pendientes", f"{df_f['Ingresos_Futuros'].sum():,.0f}")
+    c2.metric("Venta Semanal", f"{df_f['VPS'].sum():,.0f}")
+    c3.metric("WOS Promedio", f"{df_f['WOS'].replace(99, 0).mean():.1f}")
+    c4.metric("Ingresos", f"{df_f['Ingresos_Futuros'].sum() if 'Ingresos_Futuros' in df_f.columns else 0:,.0f}")
 
-    # --- TABLA DE DATOS CON FOTOS ---
-    st.subheader("📋 Detalle de Inventario y Cobertura")
-    
-    # Semáforo de stock para la tabla
-    def color_wos(val):
-        color = 'red' if val < 3 else ('orange' if val < 6 else 'green')
-        if val == 99: color = 'gray'
-        return f'color: {color}'
+    st.dataframe(df_f, use_container_width=True, hide_index=True)
 
-    st.dataframe(
-        df_f,
-        column_config={
-            "URL_Foto": st.column_config.ImageColumn("Producto"),
-            "Stock_Actual": st.column_config.NumberColumn("Stock"),
-            "WOS": st.column_config.NumberColumn("WOS (Sem)", format="%.1f"),
-            "VPS": st.column_config.NumberColumn("Venta Sem."),
-            "Ingresos_Futuros": st.column_config.NumberColumn("Ingresos")
-        },
-        hide_index=True,
-        use_container_width=True
-    )
-
-    # --- CHAT CON IA (GEMINI) ---
+    # --- IA ---
     st.divider()
-    st.subheader("🤖 Consultas Inteligentes (IA)")
-    user_input = st.chat_input("Ej: ¿Qué productos de Adidas en Dexter están por quedarse sin stock?")
-
+    user_input = st.chat_input("Consulta a la IA sobre tu stock...")
     if user_input:
-        with st.chat_message("user"):
-            st.write(user_input)
-        
-        # Configurar Gemini
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # Preparamos un resumen compacto para la IA
-        contexto_ia = df_f[['SKU', 'Descripcion', 'Cliente', 'Ubicacion', 'Stock_Actual', 'VPS', 'WOS']].head(40).to_string()
-        
-        prompt = f"""
-        Eres un experto en planeamiento de inventarios de Dass. 
-        Analiza los siguientes datos de stock y ventas para responder la pregunta del usuario.
-        
-        REGLAS DE NEGOCIO:
-        - WOS < 3: Quiebre inminente.
-        - WOS > 15: Exceso de stock (Stock inmovilizado).
-        - 'MAYORISTA' es nuestro depósito central.
-        - Si falta en una tienda pero hay en Mayorista, sugiere TRASLADO.
-        - Si no hay en ninguno, sugiere COMPRA.
-
-        DATOS:
-        {contexto_ia}
-        
-        PREGUNTA: {user_input}
-        """
-        
-        with st.chat_message("assistant"):
-            with st.spinner("Analizando inventario..."):
-                response = model.generate_content(prompt)
-                st.write(response.text)
-
+        contexto = df_f[['SKU', 'Cliente', 'Stock_Actual', 'WOS']].head(30).to_string()
+        response = model.generate_content(f"Datos: {contexto}\nPregunta: {user_input}")
+        st.info(response.text)
 else:
+    st.info("Esperando archivos CSV correctos en Drive (Stock, Maestro_Productos, Sell_out)...")
 
-    st.error("No se pudieron cargar los datos. Verifica los permisos de la Service Account en Google Drive.")
