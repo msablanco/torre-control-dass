@@ -6,17 +6,18 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
 
-# 1. Configuración de la interfaz
-st.set_page_config(page_title="Dass | Gestión Mensual", layout="wide", page_icon="👟")
+# 1. CONFIGURACIÓN DE PÁGINA
+st.set_page_config(page_title="Dass Performance Calzado v5.0", layout="wide")
 
+# Estilos CSS para simular el tablero profesional
 st.markdown("""
     <style>
-    [data-testid="stMetricValue"] { font-size: 32px; color: #1E88E5; font-weight: bold; }
-    div[data-testid="stMetric"] { background-color: white; padding: 15px; border-radius: 10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    .reportview-container { background: #f0f2f6; }
+    .metric-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
     </style>
     """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=600)
 def load_data():
     try:
         info = st.secrets["gcp_service_account"]
@@ -35,85 +36,86 @@ def load_data():
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
-            while not done:
-                _, done = downloader.next_chunk()
+            while not done: _, done = downloader.next_chunk()
             fh.seek(0)
             
-            # Normalización de tildes en columnas
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
+            # Normalizar nombres de columnas
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
             
             name = item['name'].replace('.csv', '')
             if 'Sell_out' in name:
-                # Agrupación por mes (Total de unidades vendidas en el periodo)
+                # Agrupación Mensual (Venta Total 30 días)
                 df = df.groupby(['SKU', 'Cliente', 'Ubicacion'])['Unidades'].sum().reset_index()
                 df = df.rename(columns={'Unidades': 'Venta_Mensual'})
                 name = 'Sell_out'
             dfs[name] = df
         return dfs
     except Exception as e:
-        st.error(f"Error cargando Drive: {e}")
+        st.error(f"Error: {e}")
         return None
 
 data = load_data()
 
 if data and all(k in data for k in ['Stock', 'Maestro_Productos', 'Sell_out']):
-    # Unión de datos
+    # LÓGICA DE PERFORMANCE (Basada en tu archivo HTML)
     df = data['Stock'].rename(columns={'Cantidad': 'Stock_Actual'})
     df = df.merge(data['Maestro_Productos'], on='SKU', how='left')
-    df = df.merge(data['Sell_out'][['SKU', 'Cliente', 'Ubicacion', 'Venta_Mensual']], 
-                  on=['SKU', 'Cliente', 'Ubicacion'], how='left').fillna(0)
+    df = df.merge(data['Sell_out'], on=['SKU', 'Cliente', 'Ubicacion'], how='left').fillna(0)
     
-    # Cálculo: Meses de Cobertura
-    df['Meses_Cobertura'] = df.apply(lambda x: x['Stock_Actual'] / x['Venta_Mensual'] if x['Venta_Mensual'] > 0 else 12, axis=1)
+    # 1. Sugerencia de Compra (Target: 3 meses de cobertura)
+    MESES_TARGET = 3
+    df['Sugerido_Compra'] = df.apply(lambda x: max(0, (x['Venta_Mensual'] * MESES_TARGET) - x['Stock_Actual']), axis=1)
+    
+    # 2. Cobertura (Meses)
+    df['Cobertura'] = df.apply(lambda x: x['Stock_Actual'] / x['Venta_Mensual'] if x['Venta_Mensual'] > 0 else 12, axis=1)
 
     # --- DASHBOARD ---
-    st.title("👟 Torre de Control Dass - Análisis Mensual")
+    st.title("👟 Dass Performance - Calzado v5.0")
     
-    # Filtro lateral
-    st.sidebar.header("Filtros")
-    clientes = sorted(df['Cliente'].unique())
-    f_cliente = st.sidebar.multiselect("Clientes", clientes, default=clientes[:1])
-    df_f = df[df['Cliente'].isin(f_cliente)] if f_cliente else df
+    # Filtros Pro
+    st.sidebar.header("Segmentación")
+    f_cliente = st.sidebar.multiselect("Clientes", sorted(df['Cliente'].unique()), default=df['Cliente'].unique()[:1])
+    f_cat = st.sidebar.multiselect("Categoría", sorted(df['Disciplina'].unique()) if 'Disciplina' in df.columns else [])
+    
+    df_f = df[df['Cliente'].isin(f_cliente)]
+    if f_cat: df_f = df_f[df_f['Disciplina'].isin(f_cat)]
 
-    # KPIs Mensuales
+    # MÉTRICAS DE ALTO IMPACTO
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Stock Actual", f"{df_f['Stock_Actual'].sum():,.0f}")
-    c2.metric("Venta del Mes", f"{df_f['Venta_Mensual'].sum():,.0f}")
-    cob_media = df_f[df_f['Meses_Cobertura'] < 12]['Meses_Cobertura'].mean()
-    c3.metric("Cobertura Media", f"{cob_media:.1f} meses" if not pd.isna(cob_media) else "N/A")
-    c4.metric("SKUs Activos", f"{df_f['SKU'].nunique():,}")
+    c1.metric("Stock Físico", f"{df_f['Stock_Actual'].sum():,.0f}")
+    c2.metric("Sell Out Mensual", f"{df_f['Venta_Mensual'].sum():,.0f}")
+    c3.metric("Sugerido Compra", f"{df_f['Sugerido_Compra'].sum():,.0f}", delta_color="inverse")
+    c4.metric("SKUs en Ruptura", len(df_f[(df_f['Stock_Actual'] == 0) & (df_f['Venta_Mensual'] > 0)]))
 
-    # Tabla con semáforo
-    st.subheader("📋 Estado de Inventario y Cobertura")
+    # TABLA DE PERFORMANCE
+    st.subheader("📊 Análisis de Cobertura y Sugerencia de Reposición")
     
-    def color_meses(val):
-        if val == 12: return 'color: #D3D3D3'
-        color = '#E53935' if val < 1 else '#FB8C00' if val < 2 else '#43A047'
-        return f'color: {color}; font-weight: bold'
+    # Estilo de semáforo
+    def color_status(val):
+        color = '#ff4b4b' if val < 1 else '#ffa500' if val < 2 else '#28a745'
+        return f'background-color: {color}; color: white; font-weight: bold'
 
     st.dataframe(
-        df_f[['SKU', 'Cliente', 'Ubicacion', 'Stock_Actual', 'Venta_Mensual', 'Meses_Cobertura']]
-        .sort_values('Meses_Cobertura')
-        .style.map(color_meses, subset=['Meses_Cobertura'])
-        .format({'Stock_Actual': '{:,.0f}', 'Venta_Mensual': '{:,.0f}', 'Meses_Cobertura': '{:,.1f}'}),
-        use_container_width=True, height=500
+        df_f[['SKU', 'Articulo', 'Cliente', 'Stock_Actual', 'Venta_Mensual', 'Cobertura', 'Sugerido_Compra']]
+        .sort_values(by='Sugerido_Compra', ascending=False)
+        .style.map(color_status, subset=['Cobertura'])
+        .format({'Stock_Actual': '{:,.0f}', 'Venta_Mensual': '{:,.0f}', 'Cobertura': '{:,.1f} mes', 'Sugerido_Compra': '{:,.0f}'}),
+        use_container_width=True
     )
 
-    # IA (Resumen Optimizado)
+    # IA ANALISTA (Integrando el contexto de performance)
     st.divider()
-    st.subheader("🤖 Analista IA")
-    pregunta = st.chat_input("Pregunta sobre tu stock mensual...")
+    st.subheader("🤖 Consultar Estrategia a la IA")
+    user_q = st.chat_input("Ej: ¿Qué modelos de la categoría 'Running' necesitan reposición urgente?")
     
-    if pregunta:
-        if "GEMINI_API_KEY" in st.secrets:
-            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            # Resumen compacto para evitar el error 'InvalidArgument'
-            resumen = df_f.groupby('Cliente').agg({'Stock_Actual': 'sum', 'Venta_Mensual': 'sum', 'Meses_Cobertura': 'mean'}).to_string()
-            response = model.generate_content(f"Datos Dass:\n{resumen}\nPregunta: {pregunta}")
-            st.info(response.text)
-        else:
-            st.warning("Falta la API Key de Gemini.")
+    if user_q:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Le pasamos un resumen ejecutivo a la IA
+        resumen = df_f.groupby('Articulo').agg({'Stock_Actual': 'sum', 'Venta_Mensual': 'sum', 'Sugerido_Compra': 'sum'}).head(10).to_string()
+        response = model.generate_content(f"Datos de Performance Calzado Dass:\n{resumen}\nPregunta: {user_q}")
+        st.info(response.text)
+
 else:
-    st.info("Buscando archivos en Drive...")
+    st.info("Esperando carga de archivos desde Google Drive...")
