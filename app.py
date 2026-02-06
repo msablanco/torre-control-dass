@@ -7,7 +7,7 @@ import io
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v11.13", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.14", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'}
@@ -66,17 +66,16 @@ if data:
     stk_raw = clean_df('Stock')
 
     # --- 4. FILTROS ---
-    st.sidebar.header("🔍 Filtros")
+    st.sidebar.header("🔍 Filtros de Cadena")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + sorted(list(set(so_raw['Mes'].dropna())), reverse=True))
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['Disciplina'].unique()))
     f_cli_so = st.sidebar.multiselect("👤 Cliente Sell Out", sorted(so_raw['Cliente_up'].unique()))
     f_cli_si = st.sidebar.multiselect("📦 Cliente Sell In", sorted(si_raw['Cliente_up'].unique()))
 
-    # LÓGICA DE FILTRADO CRUZADO
     selected_clients = set(f_cli_so) | set(f_cli_si)
 
-    def apply_logic(df, filter_month=True, ignore_client=False):
+    def apply_logic(df, filter_month=True):
         temp = df.copy()
         if temp.empty: return temp
         
@@ -90,10 +89,10 @@ if data:
         if filter_month and f_periodo != "Todos":
             temp = temp[temp['Mes'] == f_periodo]
         
-        # 3. Filtro Cliente (Reacción en cadena)
-        if selected_clients and not ignore_client:
+        # 3. Filtro Cliente (REACCIÓN EN CADENA)
+        if selected_clients:
             if 'Cliente_up' in temp.columns:
-                # Solo filtramos si NO es Stock de DASS (el stock propio no se filtra por cliente externo)
+                # Si hay clientes seleccionados, filtramos TODO (incluyendo Stock Dass si no coincide)
                 temp = temp[temp['Cliente_up'].isin(selected_clients)]
         
         return temp.merge(df_ma[['SKU', 'Disciplina', 'Descripcion']], on='SKU', how='left')
@@ -103,35 +102,37 @@ if data:
     stk_f = apply_logic(stk_raw)
 
     # --- 5. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v11.13")
+    st.title("📊 Torre de Control Dass v11.14")
     
-    # Stock Dass (Inmune a filtros de cliente, sensible a SKU/Disciplina)
-    stk_dass_full = stk_raw[stk_raw['Cliente_up'].str.contains('DASS', na=False)]
-    stk_dass_f = apply_logic(stk_dass_full, ignore_client=True)
-    
-    # Snapshot de Stock (Foto actual)
     max_date = stk_f['Fecha_dt'].max() if not stk_f.empty else None
     stk_snap = stk_f[stk_f['Fecha_dt'] == max_date] if max_date else pd.DataFrame()
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out (Venta)", f"{so_f['Cant'].sum():,.0f}")
     k2.metric("Sell In (Factura)", f"{si_f['Cant'].sum():,.0f}")
-    k3.metric("Stock Dass", f"{stk_dass_f['Cant'].sum():,.0f}")
-    
-    # Protección para el Stock Cliente (Evita el KeyError si está vacío)
-    stk_cli_val = 0
-    if not stk_snap.empty and 'Cliente_up' in stk_snap.columns:
-        stk_cli_val = stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum()
-    k4.metric("Stock Cliente", f"{stk_cli_val:,.0f}")
+
+    # Stock Dass (Solo suma si "DASS" está en los clientes filtrados o si no hay filtro)
+    val_dass = 0
+    if not stk_snap.empty:
+        val_dass = stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum()
+    k3.metric("Stock Dass", f"{val_dass:,.0f}")
+
+    # Stock Cliente (Lo que NO es DASS)
+    val_cli = 0
+    if not stk_snap.empty:
+        val_cli = stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum()
+    k4.metric("Stock Cliente", f"{val_cli:,.0f}")
 
     # --- 6. GRÁFICOS ---
-    st.subheader("📌 Distribución por Disciplina")
+    st.subheader("📌 Análisis por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    if not stk_dass_f.empty:
-        c1.plotly_chart(px.pie(stk_dass_f.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+    
+    # Solo mostramos gráficos si hay datos
+    if val_dass > 0:
+        c1.plotly_chart(px.pie(stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     if not so_f.empty:
         c2.plotly_chart(px.pie(so_f.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if not stk_snap.empty and 'Disciplina' in stk_snap.columns:
+    if val_cli > 0:
         c3.plotly_chart(px.pie(stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     if not si_f.empty:
         c4.plotly_chart(px.bar(si_f.groupby(['Mes', 'Disciplina'])['Cant'].sum().reset_index(), x='Mes', y='Cant', color='Disciplina', title="Sell In (Facturación)", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
@@ -143,7 +144,6 @@ if data:
     si_h = apply_logic(si_raw, filter_month=False).groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In'})
     stk_h_raw = apply_logic(stk_raw, filter_month=False)
     
-    # Separación manual para evitar errores de filtro en el gráfico
     sd_h = stk_h_raw[stk_h_raw['Cliente_up'].str.contains('DASS', na=False)].groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
     sc_h = stk_h_raw[~stk_h_raw['Cliente_up'].str.contains('DASS', na=False)].groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Cliente'})
     
@@ -161,7 +161,7 @@ if data:
     st.subheader("📋 Detalle de Inventario y Ventas")
     t_so = so_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out Total'})
     t_si = si_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In Total'})
-    t_stk_d = stk_dass_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+    t_stk_d = stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'}) if not stk_snap.empty else pd.DataFrame(columns=['SKU', 'Stock Dass'])
     t_stk_c = stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Cliente'}) if not stk_snap.empty else pd.DataFrame(columns=['SKU', 'Stock Cliente'])
     
     df_final = df_ma[['SKU', 'Descripcion', 'Disciplina']].merge(t_so, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
