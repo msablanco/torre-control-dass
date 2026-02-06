@@ -4,17 +4,13 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v11.0", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.3", layout="wide")
 
-# --- 1. CONFIGURACIÓN DE COLORES ---
-COLOR_MAP_DIS = {
-    'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131',
-    'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700',
-    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'
-}
+# --- 1. CONFIGURACIÓN VISUAL ---
+COLOR_MAP_DIS = {'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'}
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -37,140 +33,106 @@ def load_data():
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
-        st.error(f"Error Drive: {e}")
-        return {}
+        st.error(f"Error Drive: {e}"); return {}
 
 data = load_data()
 
 if data:
-    # --- 2. PROCESAMIENTO MAESTRO ---
+    # --- 2. PRE-PROCESAMIENTO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
     df_ma = df_ma.drop_duplicates(subset=['SKU'])
-    col_f = next((c for c in df_ma.columns if any(x in c.upper() for x in ['FRANJA', 'SEGMENTO', 'PRECIO'])), 'FRANJA_PRECIO')
-    df_ma['FRANJA_PRECIO'] = df_ma[col_f].fillna('SIN CAT').astype(str).str.upper()
-    col_d = next((c for c in df_ma.columns if 'DISCIPLINA' in c.upper()), 'Disciplina')
-    df_ma['Disciplina'] = df_ma[col_d].fillna('OTRO').astype(str).str.upper()
+    df_ma['Disciplina'] = df_ma.get('Disciplina', 'OTRO').fillna('OTRO').astype(str).str.upper()
+    df_ma['FRANJA_PRECIO'] = df_ma.get('FRANJA_PRECIO', 'SIN CAT').fillna('SIN CAT').astype(str).str.upper()
+    df_ma['Busqueda'] = (df_ma['SKU'] + " " + df_ma.get('Descripcion', '').fillna('')).str.upper()
 
-    # --- 3. PROCESAMIENTO TRANSACCIONES ---
-    def process_df(name):
+    def clean(name):
         df = data.get(name, pd.DataFrame()).copy()
-        if df.empty: return pd.DataFrame(columns=['SKU', 'Cant', 'Mes', 'Fecha_dt', 'Disciplina', 'FRANJA_PRECIO'])
+        if df.empty: return pd.DataFrame(columns=['SKU', 'Cant', 'Mes', 'Fecha_dt', 'Cliente_up'])
         df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
         df['Cant'] = pd.to_numeric(df.get('Unidades', df.get('Cantidad', 0)), errors='coerce').fillna(0)
         c_f = next((c for c in df.columns if any(x in c.upper() for x in ['FECHA', 'VENTA', 'ARRIVO'])), 'Fecha')
         df['Fecha_dt'] = pd.to_datetime(df[c_f], dayfirst=True, errors='coerce')
         df['Mes'] = df['Fecha_dt'].dt.strftime('%Y-%m')
-        return df.merge(df_ma[['SKU', 'Disciplina', 'FRANJA_PRECIO', 'Descripcion']], on='SKU', how='left')
+        df['Cliente_up'] = df.get('Cliente', '').fillna('').astype(str).str.upper()
+        return df
 
-    so_all = process_df('Sell_out')
-    si_all = process_df('Sell_in')
-    stk_all = process_df('Stock')
-    if not stk_all.empty:
-        stk_all['Cliente_up'] = stk_all.get('Cliente', '').fillna('').astype(str).str.upper()
+    so_all, si_all, stk_all = clean('Sell_out'), clean('Sell_in'), clean('Stock')
 
-    # --- 4. SIDEBAR ---
-    st.sidebar.header("🔍 Filtros de Tablero")
-    search_query = st.sidebar.text_input("🔎 Buscador (SKU / Nombre)").upper()
-    
-    raw_months = sorted(list(set(so_all['Mes'].dropna()) | set(si_all['Mes'].dropna())), 
-                        key=lambda x: pd.to_datetime(x, format='%Y-%m'), reverse=True)
-    f_periodo = st.sidebar.selectbox("📅 Mes de Análisis", ["Todos"] + raw_months)
-    
-    f_dis = st.sidebar.multiselect("👟 Disciplina", sorted(df_ma['Disciplina'].unique()))
-    f_fra = st.sidebar.multiselect("🏷️ Franja", sorted(df_ma['FRANJA_PRECIO'].unique()))
+    # --- 3. SIDEBAR & FILTROS ATÓMICOS ---
+    st.sidebar.header("🔍 Filtros")
+    search_query = st.sidebar.text_input("🔎 SKU / Nombre").upper()
+    f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + sorted(list(set(so_all['Mes'].dropna())), reverse=True))
+    f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['Disciplina'].unique()))
+    f_fra = st.sidebar.multiselect("🏷️ Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
 
-    # --- 5. LÓGICA DE FILTRADO ---
-    def apply_filters(df):
+    m_filt = df_ma.copy()
+    if f_dis: m_filt = m_filt[m_filt['Disciplina'].isin(f_dis)]
+    if f_fra: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_fra)]
+    if search_query: m_filt = m_filt[m_filt['Busqueda'].str.contains(search_query, na=False)]
+    skus_ok = set(m_filt['SKU'])
+
+    def final_f(df, filter_m=True):
         if df.empty: return df
-        temp = df
-        if f_periodo != "Todos": temp = temp[temp['Mes'] == f_periodo]
-        if f_dis: temp = temp[temp['Disciplina'].isin(f_dis)]
-        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
-        if search_query:
-            temp = temp[temp.apply(lambda r: r.astype(str).str.contains(search_query).any(), axis=1)]
-        return temp
+        t = df[df['SKU'].isin(skus_ok)]
+        if filter_m and f_periodo != "Todos": t = t[t['Mes'] == f_periodo]
+        return t.merge(df_ma[['SKU', 'Disciplina', 'FRANJA_PRECIO', 'Descripcion']], on='SKU', how='left')
 
-    # Aplicamos filtros para los gráficos superiores
-    so_f = apply_filters(so_all)
-    si_f = apply_filters(si_all)
-    stk_f = apply_filters(stk_all)
+    so_f, si_f, stk_f = final_f(so_all), final_f(si_all), final_f(stk_all)
 
-    # --- 6. DASHBOARD SUPERIOR ---
-    st.title(f"📊 Torre de Control Dass v11.0")
-
-    # KPIs
-    max_f = stk_f['Fecha_dt'].max() if not stk_f.empty else None
-    stk_snap = stk_f[stk_f['Fecha_dt'] == max_f] if max_f else pd.DataFrame()
+    # --- 4. DASHBOARD ---
+    st.title("📊 Performance Dass v11.3")
     
-    k_so, k_si = so_f['Cant'].sum(), si_f['Cant'].sum()
-    k_sc = stk_snap[~stk_snap['Cliente_up'].str.contains('DASS')]['Cant'].sum() if not stk_snap.empty else 0
-    k_sd = stk_snap[stk_snap['Cliente_up'].str.contains('DASS')]['Cant'].sum() if not stk_snap.empty else 0
+    # KPIs (Último Stock)
+    stk_snap = stk_f[stk_f['Fecha_dt'] == stk_f['Fecha_dt'].max()] if not stk_f.empty else pd.DataFrame()
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Sell Out", f"{so_f['Cant'].sum():,.0f}")
+    k2.metric("Sell In", f"{si_f['Cant'].sum():,.0f}")
+    k3.metric("Stock Dass", f"{stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
+    k4.metric("Stock Cliente", f"{stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
 
-    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-    col_k1.metric("Sell Out", f"{k_so:,.0f}")
-    col_k2.metric("Sell In", f"{k_si:,.0f}")
-    col_k3.metric("Stock Cliente", f"{k_sc:,.0f}")
-    col_k4.metric("Stock Dass", f"{k_sd:,.0f}")
-
-    # --- 7. FILAS DE GRÁFICOS (Tortas y Barras) ---
-    def render_row(title, so_data, si_data, stk_data, group_col, color_map=None):
+    # --- 5. GRÁFICOS (REDUCIDOS PARA VELOCIDAD) ---
+    def row_v10(title, so, si, stk, g_col):
         st.subheader(title)
         c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-        
-        def safe_pie(df, title_pie, target_col):
-            if not df.empty:
-                fig_data = df.groupby(group_col)['Cant'].sum().reset_index()
-                if not fig_data.empty:
-                    target_col.plotly_chart(px.pie(fig_data, values='Cant', names=group_col, title=title_pie, color=group_col, color_discrete_map=color_map), use_container_width=True)
+        if not stk.empty:
+            c1.plotly_chart(px.pie(stk[stk['Cliente_up'].str.contains('DASS', na=False)].groupby(g_col)['Cant'].sum().reset_index(), values='Cant', names=g_col, title="Stk Dass", color=g_col, color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+            c3.plotly_chart(px.pie(stk[~stk['Cliente_up'].str.contains('DASS', na=False)].groupby(g_col)['Cant'].sum().reset_index(), values='Cant', names=g_col, title="Stk Cliente", color=g_col, color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not so.empty:
+            c2.plotly_chart(px.pie(so.groupby(g_col)['Cant'].sum().reset_index(), values='Cant', names=g_col, title="Sell Out", color=g_col, color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not si.empty:
+            c4.plotly_chart(px.bar(si.groupby(['Mes', g_col])['Cant'].sum().reset_index(), x='Mes', y='Cant', color=g_col, title="Sell In", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
-        safe_pie(stk_data[stk_data['Cliente_up'].str.contains('DASS')] if not stk_data.empty else pd.DataFrame(), "Stock Dass", c1)
-        safe_pie(so_data, "Sell Out", c2)
-        safe_pie(stk_data[~stk_data['Cliente_up'].str.contains('DASS')] if not stk_data.empty else pd.DataFrame(), "Stock Cliente", c3)
-        
-        if not si_data.empty:
-            si_m = si_data.groupby(['Mes', group_col])['Cant'].sum().reset_index()
-            c4.plotly_chart(px.bar(si_m, x='Mes', y='Cant', color=group_col, title="Sell In Evolución", color_discrete_map=color_map), use_container_width=True)
+    row_v10("📌 Análisis por Disciplina", so_f, si_f, stk_snap, 'Disciplina')
 
-    render_row("📌 Análisis por Disciplina", so_f, si_f, stk_snap, 'Disciplina', COLOR_MAP_DIS)
-    render_row("🏷️ Análisis por Franja Comercial", so_f, si_f, stk_snap, 'FRANJA_PRECIO')
-
-    # --- 8. LÍNEA DE TIEMPO INTEGRADA (DEBAJO DE LOS GRÁFICOS) ---
+    # --- 6. LÍNEA DE TIEMPO 4D (MULTIAXIS) ---
     st.divider()
-    st.subheader("📈 Línea de Tiempo Dinámica (Ventas e Ingresos)")
+    st.subheader("📈 Evolución Histórica: Ventas vs Ingresos vs Stocks")
+    
+    # Preparamos datos históricos (sin filtrar por mes seleccionado)
+    so_h = final_f(so_all, False).groupby('Mes')['Cant'].sum().reset_index()
+    si_h = final_f(si_all, False).groupby('Mes')['Cant'].sum().reset_index()
+    stk_h = final_f(stk_all, False)
+    
+    stk_dass_h = stk_h[stk_h['Cliente_up'].str.contains('DASS', na=False)].groupby('Mes')['Cant'].sum().reset_index()
+    stk_cli_h = stk_h[~stk_h['Cliente_up'].str.contains('DASS', na=False)].groupby('Mes')['Cant'].sum().reset_index()
 
-    # IMPORTANTE: Para la línea de tiempo NO filtramos por mes (f_periodo), 
-    # pero SÍ por Disciplina, Franja y Buscador para que reaccione a los filtros.
-    def apply_filters_historical(df):
-        if df.empty: return df
-        temp = df
-        if f_dis: temp = temp[temp['Disciplina'].isin(f_dis)]
-        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
-        if search_query:
-            temp = temp[temp.apply(lambda r: r.astype(str).str.contains(search_query).any(), axis=1)]
-        return temp
+    # Consolidación final
+    df_h = so_h.rename(columns={'Cant': 'Sell Out'})
+    df_h = df_h.merge(si_h.rename(columns={'Cant': 'Sell In'}), on='Mes', how='outer')
+    df_h = df_h.merge(stk_dass_h.rename(columns={'Cant': 'Stock Dass'}), on='Mes', how='outer')
+    df_h = df_h.merge(stk_cli_h.rename(columns={'Cant': 'Stock Cliente'}), on='Mes', how='outer')
+    df_h = df_h.fillna(0).sort_values('Mes')
 
-    so_h = apply_filters_historical(so_all)
-    si_h = apply_filters_historical(si_all)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
+    fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
+    fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Stock Dass'], name='Stock Dass', line=dict(color='#00A693', width=2)))
+    fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Stock Cliente'], name='Stock Cliente', line=dict(color='#FFD700', width=2)))
+    
+    fig.update_layout(height=500, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1))
+    st.plotly_chart(fig, use_container_width=True)
 
-    if not so_h.empty or not si_h.empty:
-        # Agrupar datos por mes
-        df_so_line = so_h.groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out'})
-        df_si_line = si_h.groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In'})
-        
-        # Unir para el gráfico
-        df_line = pd.merge(df_so_line, df_si_line, on='Mes', how='outer').fillna(0).sort_values('Mes')
-        
-        fig_line = go.Figure()
-        fig_line.add_trace(go.Scatter(x=df_line['Mes'], y=df_line['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=3), mode='lines+markers'))
-        fig_line.add_trace(go.Scatter(x=df_line['Mes'], y=df_line['Sell In'], name='Sell In / Arribos', line=dict(color='#FF3131', width=3, dash='dot'), mode='lines+markers'))
-        
-        fig_line.update_layout(height=400, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-        st.plotly_chart(fig_line, use_container_width=True)
-    else:
-        st.info("No hay datos históricos para los filtros seleccionados.")
-
-    # --- 9. TABLA FINAL ---
+    # --- 7. TABLA ---
     st.divider()
-    t_so = so_f.groupby(['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO'])['Cant'].sum().reset_index().rename(columns={'Cant': 'SO'})
-    st.dataframe(t_so.sort_values('SO', ascending=False), use_container_width=True, hide_index=True)
+    st.dataframe(so_f.groupby(['SKU', 'Descripcion']).agg({'Cant': 'sum'}).reset_index().sort_values('Cant', ascending=False), use_container_width=True)
