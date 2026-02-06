@@ -10,20 +10,18 @@ import plotly.express as px
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
 
-# --- 1. CONFIGURACIÓN VISUAL (MAPAS DE COLORES CONSISTENTES) ---
+# --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 
     'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000',
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
-
 COLOR_MAP_FRA = {
     'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
     'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
 }
 
-# --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -38,16 +36,14 @@ def load_data():
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
-            while not done:
-                _, done = downloader.next_chunk()
+            while not done: _, done = downloader.next_chunk()
             fh.seek(0)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
-        st.error(f"Error Drive: {e}")
-        return {}
+        st.error(f"Error Drive: {e}"); return {}
 
 data = load_data()
 
@@ -70,12 +66,13 @@ if data:
         col_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'ARRIVO', 'MOVIMIENTO'])), 'FECHA')
         df['FECHA_DT'] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
         df['MES'] = df['FECHA_DT'].dt.strftime('%Y-%m')
+        # La Columna F del CSV se mapea aquí como CLIENTE_UP
         df['CLIENTE_UP'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.upper()
         return df
 
     so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
-    # --- 4. FILTROS ---
+    # --- FILTROS ---
     st.sidebar.header("🔍 Filtros Globales")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
@@ -106,56 +103,55 @@ if data:
     so_f, si_f, stk_f = apply_logic(so_raw), apply_logic(si_raw), apply_logic(stk_raw)
 
     st.title("📊 Torre de Control Dass v11.38")
+    
+    # Snapshot de Stock más reciente
     max_date = stk_f['FECHA_DT'].max() if not stk_f.empty else None
     stk_snap = stk_f[stk_f['FECHA_DT'] == max_date] if max_date else pd.DataFrame()
     
+    # --- LOGICA MEJORADA DE STOCK BASADA EN "WHOLESALE" ---
+    mask_wholesale = stk_snap['CLIENTE_UP'].str.contains('WHOLESALE', na=False)
+    mask_dass = stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)
+    
+    val_out = so_f['CANT'].sum()
+    val_in = si_f['CANT'].sum()
+    val_stock_dass = stk_snap[mask_dass]['CANT'].sum()
+    val_stock_cli = stk_snap[mask_wholesale]['CANT'].sum()
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out", f"{so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In", f"{si_f['CANT'].sum():,.0f}")
-    val_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k3.metric("Stock Dass", f"{val_d:,.0f}")
-    val_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k4.metric("Stock Cliente", f"{val_c:,.0f}")
+    k1.metric("Sell Out", f"{val_out:,.0f}")
+    k2.metric("Sell In", f"{val_in:,.0f}")
+    k3.metric("Stock Dass", f"{val_stock_dass:,.0f}")
+    k4.metric("Stock Cliente", f"{val_stock_cli:,.0f}")
 
     st.divider()
     st.subheader("📌 Análisis por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     
-    if val_d > 0:
-        c1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+    if val_stock_dass > 0:
+        c1.plotly_chart(px.pie(stk_snap[mask_dass].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     if not so_f.empty:
         c2.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if val_c > 0:
-        c3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    
+    if val_stock_cli > 0:
+        c3.plotly_chart(px.pie(stk_snap[mask_wholesale].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     if not si_f.empty:
-        # Gráfico de barras con unidades reales y etiquetas de %
         df_bar_dis = si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index()
-        fig_bar_dis = px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Disciplina (con % Mix)", 
-                             color_discrete_map=COLOR_MAP_DIS, text_auto='.2s')
-        # Calculamos el porcentaje relativo a cada mes
-        fig_bar_dis.update_traces(textposition='inside')
-        # Esta línea permite que al pasar el mouse se vea el % relativo al grupo (mes)
-        fig_bar_dis.update_layout(barmode='stack', yaxis_title="Unidades")
-        c4.plotly_chart(fig_bar_dis, use_container_width=True)
+        fig_dis = px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In Historico (con % Mix)", color_discrete_map=COLOR_MAP_DIS, text_auto='.2s')
+        fig_dis.update_traces(textposition='inside'); fig_dis.update_layout(barmode='stack')
+        c4.plotly_chart(fig_dis, use_container_width=True)
 
     st.subheader("💰 Análisis por Franja de Precio")
     f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
-    
-    if val_d > 0:
-        f1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    if val_stock_dass > 0:
+        f1.plotly_chart(px.pie(stk_snap[mask_dass].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     if not so_f.empty:
         f2.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    if val_c > 0:
-        f3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    
+    if val_stock_cli > 0:
+        f3.plotly_chart(px.pie(stk_snap[mask_wholesale].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     if not si_f.empty:
         df_bar_fra = si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index()
-        fig_bar_fra = px.bar(df_bar_fra, x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja (con % Mix)", 
-                             color_discrete_map=COLOR_MAP_FRA, text_auto='.2s')
-        fig_bar_fra.update_traces(textposition='inside')
-        fig_bar_fra.update_layout(barmode='stack', yaxis_title="Unidades")
-        f4.plotly_chart(fig_bar_fra, use_container_width=True)
+        fig_fra = px.bar(df_bar_fra, x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja (con % Mix)", color_discrete_map=COLOR_MAP_FRA, text_auto='.2s')
+        fig_fra.update_traces(textposition='inside'); fig_fra.update_layout(barmode='stack')
+        f4.plotly_chart(fig_fra, use_container_width=True)
 
     st.divider()
     st.subheader("📈 Evolución Histórica Comparativa")
@@ -163,9 +159,8 @@ if data:
     h_si = apply_logic(si_raw, False).groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Sell In'})
     stk_h_all = apply_logic(stk_raw, False)
     h_sd = stk_h_all[stk_h_all['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Stock Dass'})
-    h_sc = stk_h_all[~stk_h_all['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Stock Cliente'})
+    h_sc = stk_h_all[stk_h_all['CLIENTE_UP'].str.contains('WHOLESALE', na=False)].groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Stock Cliente'})
     df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
-    
     fig_h = go.Figure()
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
@@ -177,9 +172,8 @@ if data:
     st.subheader("📋 Detalle de Inventario y Ventas por SKU")
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
     t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
-    t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
-    t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
-    
+    t_stk_d = stk_snap[mask_dass].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
+    t_stk_c = stk_snap[mask_wholesale].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
     df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
     df_final = df_final[(df_final['Sell Out'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Sell In'] > 0)]
     st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
