@@ -64,7 +64,7 @@ with col_logo:
     except: pass
 with col_title:
     st.title("Performance & Inteligencia: Fila Calzado")
-    st.markdown("### Torre de Control de Inventario y Ventas")
+    st.markdown("")
 
 if data:
     # --- 3. PROCESAMIENTO DE DATOS ---
@@ -214,3 +214,4 @@ if data:
 
 else:
     st.error("Error al conectar con Google Drive. Revisa st.secrets.")
+
