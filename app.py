@@ -7,7 +7,7 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v6.7", layout="wide")
+st.set_page_config(page_title="Dass Performance v6.8", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -36,20 +36,13 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO MAESTRO (SEGMENTACIÓN COMERCIAL) ---
+    # --- 1. PROCESAMIENTO MAESTRO (COLUMNA FRANJA_PRECIO) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    
-    # Buscamos la columna "Franja" (Pinnacle, Best, etc.)
-    # Si no existe con ese nombre exacto, buscamos "Segmento" o creamos una vacía para evitar errores
-    if 'Franja' not in df_ma.columns:
-        if 'Segmento' in df_ma.columns:
-            df_ma = df_ma.rename(columns={'Segmento': 'Franja'})
-        else:
-            df_ma['Franja'] = 'Sin Segmento'
-    
-    df_ma['Franja'] = df_ma['Franja'].fillna('Sin Segmento').astype(str).str.upper()
+    if 'FRANJA_PRECIO' not in df_ma.columns:
+        df_ma['FRANJA_PRECIO'] = 'SIN CATEGORIA'
+    df_ma['FRANJA_PRECIO'] = df_ma['FRANJA_PRECIO'].fillna('SIN CATEGORIA').astype(str).str.upper()
 
-    # --- 2. STOCK (FOTO + CLIENTE + FECHA) ---
+    # --- 2. STOCK (LÓGICA: COLUMNA CLIENTE == DASS) ---
     stk_raw = data.get('Stock', pd.DataFrame())
     st_dass_grp = pd.DataFrame(columns=['SKU', 'Stock Dass'])
     st_cli_grp = pd.DataFrame(columns=['SKU', 'Stock Clientes', 'Cliente'])
@@ -58,23 +51,24 @@ if data:
     if not stk_raw.empty:
         stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
         stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw.get('Fecha'), dayfirst=True, errors='coerce').fillna(pd.Timestamp.now())
-        stk_raw['Ubicacion'] = stk_raw['Ubicacion'].fillna('').astype(str).str.upper()
-        stk_raw['Cliente'] = stk_raw['Cliente'].fillna('SIN CLIENTE').astype(str).str.strip()
+        stk_raw['Cliente_stk'] = stk_raw['Cliente'].fillna('').astype(str).str.upper().str.strip()
         
         stk_s = stk_raw.sort_values(by='Fecha_dt')
-        mask_d = stk_s['Ubicacion'].str.contains('DASS|CENTRAL|DEP|PROPIO|LOG|MAYORISTA', na=False)
         
-        st_dass_grp = stk_s[mask_d].groupby('SKU')['Cant'].last().reset_index().rename(columns={'Cant': 'Stock Dass'})
-        st_cli_grp = stk_s[~mask_d].groupby(['SKU', 'Cliente']).agg({'Cant': 'last', 'Fecha_dt': 'max'}).reset_index().rename(columns={'Cant': 'Stock Clientes'})
-        if not stk_s[~mask_d].empty:
-            fecha_foto_cli = stk_s[~mask_d]['Fecha_dt'].max().strftime('%d/%m/%Y')
+        # EL PEDIDO: Si en columna cliente dice DASS, es Stock Dass
+        mask_dass = stk_s['Cliente_stk'].str.contains('DASS', na=False)
+        
+        st_dass_grp = stk_s[mask_dass].groupby('SKU')['Cant'].last().reset_index().rename(columns={'Cant': 'Stock Dass'})
+        st_cli_grp = stk_s[~mask_dass].groupby(['SKU', 'Cliente']).agg({'Cant': 'last', 'Fecha_dt': 'max'}).reset_index().rename(columns={'Cant': 'Stock Clientes'})
+        if not stk_s[~mask_dass].empty:
+            fecha_foto_cli = stk_s[~mask_dass]['Fecha_dt'].max().strftime('%d/%m/%Y')
 
     # --- 3. VENTAS (IN / OUT) ---
     si_raw = data.get('Sell_in', pd.DataFrame())
-    si_grp = pd.DataFrame(columns=['SKU', 'Sell in', 'Cliente'])
-    if not si_raw.empty:
-        si_raw['Sell in'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
-        si_grp = si_raw.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
+    si_grp = si_raw.copy()
+    if not si_grp.empty:
+        si_grp['Sell in'] = pd.to_numeric(si_grp['Unidades'], errors='coerce').fillna(0)
+        si_grp = si_grp.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
 
     so_raw = data.get('Sell_out', pd.DataFrame())
     so_final = pd.DataFrame(columns=['SKU', 'Sell out Clientes', 'Sell out tiendas', 'Cliente'])
@@ -86,13 +80,12 @@ if data:
         so_final = pd.concat([so_c, so_t]).groupby(['SKU', 'Cliente']).sum().reset_index()
 
     # --- 4. FILTROS ---
-    st.sidebar.header("🔍 Filtros de Gestión")
+    st.sidebar.header("🔍 Filtros Dinámicos")
     clis_all = sorted(list(set(si_grp['Cliente'].dropna().unique().tolist() + st_cli_grp['Cliente'].dropna().unique().tolist())))
-    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['0', 'nan', 'SIN CLIENTE']])
+    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['0', 'DASS']])
     f_dis = st.sidebar.multiselect("Disciplina", sorted(df_ma['Disciplina'].unique().tolist()) if 'Disciplina' in df_ma.columns else [])
-    f_fra = st.sidebar.multiselect("Franja (Segmento)", sorted(df_ma['Franja'].unique().tolist()))
+    f_fra = st.sidebar.multiselect("Franja (Pinnacle/Best/etc)", sorted(df_ma['FRANJA_PRECIO'].unique().tolist()))
 
-    # Filtrado lógico
     if f_cli:
         si_grp = si_grp[si_grp['Cliente'].isin(f_cli)]
         so_final = so_final[so_final['Cliente'].isin(f_cli)]
@@ -105,11 +98,11 @@ if data:
     df = df.fillna(0)
 
     if f_dis: df = df[df['Disciplina'].isin(f_dis)]
-    if f_fra: df = df[df['Franja'].isin(f_fra)]
+    if f_fra: df = df[df['FRANJA_PRECIO'].isin(f_fra)]
 
-    # --- 5. DASHBOARD ---
-    st.title("📊 Análisis de Performance por Franja Comercial")
-    st.info(f"📅 Stock Clientes basado en la foto del: **{fecha_foto_cli}**")
+    # --- 5. VISUALIZACIÓN ---
+    st.title("📊 Torre de Control Dass v6.8")
+    st.info(f"📅 Foto Stock Clientes: **{fecha_foto_cli}** | Stock Dass detectado por Cliente='DASS'")
 
     def safe_pie(dataframe, val_col, name_col, title_str, col_target):
         clean_df = dataframe[dataframe[val_col] > 0]
@@ -119,24 +112,22 @@ if data:
         else:
             col_target.warning(f"Sin datos: {title_str}")
 
-    # FILA 1: Por Disciplina
     st.subheader("📌 Participación por Disciplina")
     g1, g2, g3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass", g1)
-    safe_pie(df, 'Sell in', 'Disciplina', "Ingresos (Sell In)", g2)
-    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out Clientes", g3)
+    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass (Foto)", g1)
+    safe_pie(df, 'Sell in', 'Disciplina', "Ingresos (Flujo)", g2)
+    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out (Flujo)", g3)
 
-    # FILA 2: Por Franja Comercial (Pinnacle, Best, etc.)
-    st.subheader("🏆 Participación por Franja Comercial")
+    st.subheader("🏆 Participación por Franja de Producto")
     p1, p2, p3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'Franja', "Stock Dass por Franja", p1)
-    safe_pie(df, 'Sell in', 'Franja', "Ingresos por Franja", p2)
-    safe_pie(df, 'Sell out Clientes', 'Franja', "Sell Out por Franja", p3)
+    safe_pie(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass por Franja", p1)
+    safe_pie(df, 'Sell in', 'FRANJA_PRECIO', "Ingresos por Franja", p2)
+    safe_pie(df, 'Sell out Clientes', 'FRANJA_PRECIO', "Sell Out por Franja", p3)
 
     # --- 6. RANKING ---
     st.divider()
     df['WOS'] = np.where(df['Sell out Clientes']>0, df['Stock Clientes']/df['Sell out Clientes'], 0)
-    cols_rank = ['SKU', 'Descripcion', 'Franja', 'Sell in', 'Sell out Clientes', 'Stock Dass', 'Stock Clientes', 'WOS']
+    cols_rank = ['SKU', 'Descripcion', 'FRANJA_PRECIO', 'Sell in', 'Sell out Clientes', 'Stock Dass', 'Stock Clientes', 'WOS']
     st.dataframe(
         df[cols_rank].sort_values('Sell out Clientes', ascending=False).style.format({
             'Sell in':'{:,.0f}', 'Sell out Clientes':'{:,.0f}', 'Stock Dass':'{:,.0f}', 
@@ -145,4 +136,4 @@ if data:
         use_container_width=True
     )
 else:
-    st.info("Conectando con Drive...")
+    st.info("Asegúrate de que 'Stock.csv' y 'Maestro_Productos.csv' estén en Drive...")
