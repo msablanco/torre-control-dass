@@ -7,7 +7,7 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v6.5", layout="wide")
+st.set_page_config(page_title="Dass Performance v6.6", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -38,14 +38,15 @@ data = load_data()
 if data:
     # --- 1. PROCESAMIENTO MAESTRO Y PRECIOS ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
+    
+    # ASEGURAMOS EXISTENCIA DE COLUMNA FRANJA PRECIO
     if 'Precio' in df_ma.columns:
         df_ma['Precio_Num'] = pd.to_numeric(df_ma['Precio'], errors='coerce').fillna(0)
-        # Definimos bins fijos para evitar que desaparezcan las categorías
         bins = [0, 20000, 40000, 60000, 80000, 100000, 150000, 10000000]
         labels = ['<20k', '20k-40k', '40k-60k', '60k-80k', '80k-100k', '100k-150k', '>150k']
-        df_ma['Franja Precio'] = pd.cut(df_ma['Precio_Num'], bins=bins, labels=labels, include_lowest=True)
-        # Convertimos a string para evitar errores de Plotly con categorías vacías
-        df_ma['Franja Precio'] = df_ma['Franja Precio'].astype(str)
+        df_ma['Franja Precio'] = pd.cut(df_ma['Precio_Num'], bins=bins, labels=labels, include_lowest=True).astype(str)
+    else:
+        df_ma['Franja Precio'] = 'N/A'
 
     # --- 2. STOCK (FOTO + CLIENTE + FECHA) ---
     stk_raw = data.get('Stock', pd.DataFrame())
@@ -55,24 +56,29 @@ if data:
 
     if not stk_raw.empty:
         stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
-        stk_raw['Fecha'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
+        # Manejo de Fecha en Stock
+        if 'Fecha' in stk_raw.columns:
+            stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
+        else:
+            stk_raw['Fecha_dt'] = pd.Timestamp.now()
+            
         stk_raw['Ubicacion'] = stk_raw['Ubicacion'].fillna('').astype(str).str.upper()
         stk_raw['Cliente'] = stk_raw['Cliente'].fillna('SIN CLIENTE').astype(str).str.strip()
         
-        stk_s = stk_raw.sort_values(by='Fecha')
+        stk_s = stk_raw.sort_values(by='Fecha_dt')
         mask_d = stk_s['Ubicacion'].str.contains('DASS|CENTRAL|DEP|PROPIO|LOG|MAYORISTA', na=False)
         
         st_dass_grp = stk_s[mask_d].groupby('SKU')['Cant'].last().reset_index().rename(columns={'Cant': 'Stock Dass'})
-        st_cli_grp = stk_s[~mask_d].groupby(['SKU', 'Cliente']).agg({'Cant': 'last', 'Fecha': 'max'}).reset_index().rename(columns={'Cant': 'Stock Clientes'})
+        st_cli_grp = stk_s[~mask_d].groupby(['SKU', 'Cliente']).agg({'Cant': 'last', 'Fecha_dt': 'max'}).reset_index().rename(columns={'Cant': 'Stock Clientes'})
         if not stk_s[~mask_d].empty:
-            fecha_foto_cli = stk_s[~mask_d]['Fecha'].max().strftime('%d/%m/%Y')
+            fecha_foto_cli = stk_s[~mask_d]['Fecha_dt'].max().strftime('%d/%m/%Y')
 
-    # --- 3. VENTAS (SELL IN / SELL OUT) ---
+    # --- 3. VENTAS ---
     si_raw = data.get('Sell_in', pd.DataFrame())
-    si_grp = si_raw.copy()
-    if not si_grp.empty:
-        si_grp['Sell in'] = pd.to_numeric(si_grp['Unidades'], errors='coerce').fillna(0)
-        si_grp = si_grp.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
+    si_grp = pd.DataFrame(columns=['SKU', 'Sell in', 'Cliente'])
+    if not si_raw.empty:
+        si_raw['Sell in'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
+        si_grp = si_raw.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
 
     so_raw = data.get('Sell_out', pd.DataFrame())
     so_final = pd.DataFrame(columns=['SKU', 'Sell out Clientes', 'Sell out tiendas', 'Cliente'])
@@ -81,42 +87,55 @@ if data:
         so_raw['Tipo'] = so_raw['Tipo'].fillna('').astype(str).str.upper()
         so_c = so_raw[so_raw['Tipo'].str.contains('CLIENTE')].groupby(['SKU', 'Cliente'])['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Clientes'})
         so_t = so_raw[so_raw['Tipo'].str.contains('TIENDA')].groupby(['SKU', 'Cliente'])['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out tiendas'})
-        so_final = so_c.merge(so_t, on=['SKU', 'Cliente'], how='outer').fillna(0)
+        so_final = pd.concat([so_c, so_t]).groupby(['SKU', 'Cliente']).sum().reset_index()
 
-    # --- 4. FILTROS EN SIDEBAR ---
+    # --- 4. FILTROS SEGUROS EN SIDEBAR ---
     st.sidebar.header("🔍 Filtros de Gestión")
+    
+    # Clientes
     clis_all = sorted(list(set(si_grp['Cliente'].dropna().unique().tolist() + st_cli_grp['Cliente'].dropna().unique().tolist())))
-    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) != '0'])
-    f_dis = st.sidebar.multiselect("Disciplina", sorted(df_ma['Disciplina'].unique().tolist()))
-    f_pre = st.sidebar.multiselect("Franja de Precio", sorted(df_ma['Franja Precio'].unique().tolist()))
+    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['0', 'nan', 'SIN CLIENTE']])
+    
+    # Disciplina (Protección contra columna faltante)
+    disc_list = sorted(df_ma['Disciplina'].unique().tolist()) if 'Disciplina' in df_ma.columns else []
+    f_dis = st.sidebar.multiselect("Disciplina", disc_list)
+    
+    # Franja Precio (Protección contra columna faltante)
+    pre_list = sorted(df_ma['Franja Precio'].unique().tolist()) if 'Franja Precio' in df_ma.columns else []
+    f_pre = st.sidebar.multiselect("Franja de Precio", pre_list)
 
-    # Aplicar Filtros
+    # Aplicar Filtros a las sub-tablas
     if f_cli:
         si_grp = si_grp[si_grp['Cliente'].isin(f_cli)]
         so_final = so_final[so_final['Cliente'].isin(f_cli)]
         st_cli_grp = st_cli_grp[st_cli_grp['Cliente'].isin(f_cli)]
     
+    # --- 5. MERGE FINAL ---
     df = df_ma.merge(st_dass_grp, on='SKU', how='left')
     df = df.merge(si_grp.groupby('SKU')['Sell in'].sum().reset_index(), on='SKU', how='left')
     df = df.merge(so_final.groupby('SKU')[['Sell out Clientes', 'Sell out tiendas']].sum().reset_index(), on='SKU', how='left')
     df = df.merge(st_cli_grp.groupby('SKU')['Stock Clientes'].sum().reset_index(), on='SKU', how='left')
     df = df.fillna(0)
 
+    # Aplicar filtros al DF Final
     if f_dis: df = df[df['Disciplina'].isin(f_dis)]
     if f_pre: df = df[df['Franja Precio'].isin(f_pre)]
 
-    # --- 5. VISUALIZACIÓN ---
-    st.title("📊 Torre de Control Dass v6.5")
+    # --- 6. VISUALIZACIÓN ---
+    st.title("📊 Torre de Control Dass v6.6")
     st.info(f"📅 Stock Clientes basado en la foto del: **{fecha_foto_cli}**")
 
     # Función Segura para Gráficos
     def safe_pie(dataframe, val_col, name_col, title_str, col_target):
-        clean_df = dataframe[dataframe[val_col] > 0]
-        if not clean_df.empty:
-            fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str)
-            col_target.plotly_chart(fig, use_container_width=True)
+        if name_col in dataframe.columns:
+            clean_df = dataframe[dataframe[val_col] > 0]
+            if not clean_df.empty:
+                fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str)
+                col_target.plotly_chart(fig, use_container_width=True)
+            else:
+                col_target.warning(f"Sin datos: {title_str}")
         else:
-            col_target.warning(f"Sin datos: {title_str}")
+            col_target.error(f"Falta columna: {name_col}")
 
     # FILA 1: Por Disciplina
     st.subheader("📌 Participación por Disciplina")
@@ -132,9 +151,9 @@ if data:
     safe_pie(df, 'Sell in', 'Franja Precio', "Ingresos por $", p2)
     safe_pie(df, 'Sell out Clientes', 'Franja Precio', "Sell Out por $", p3)
 
-    # --- 6. RANKING ---
+    # --- 7. RANKING ---
     st.divider()
-    st.subheader("🏆 Ranking de Productos")
+    st.subheader("🏆 Ranking Detallado")
     
     df['Stock/Sellin'] = np.where(df['Sell in']>0, (df['Stock Dass']+df['Stock Clientes'])/df['Sell in'], 0)
     df['WOS'] = np.where(df['Sell out Clientes']>0, df['Stock Clientes']/df['Sell out Clientes'], 0)
@@ -148,4 +167,4 @@ if data:
         use_container_width=True, height=500
     )
 else:
-    st.info("Conectando con Google Drive...")
+    st.info("Cargando datos...")
