@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Dass Performance v11.", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {
@@ -48,10 +48,12 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO ---
+    # --- 2. MAESTRO (CON LIMPIEZA DE NULOS PARA EVITAR TYPEERROR) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
+        df_ma['DISCIPLINA'] = df_ma['DISCIPLINA'].fillna('SIN CATEGORIA').astype(str).str.upper()
+        df_ma['FRANJA_PRECIO'] = df_ma['FRANJA_PRECIO'].fillna('SIN CATEGORIA').astype(str).str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION'].fillna('').astype(str).str.upper()
 
@@ -86,17 +88,18 @@ if data:
     so_raw = process_sales('Sell_out')
     si_raw = process_sales('Sell_in')
 
-    # --- 5. FILTROS EN BARRA LATERAL ---
+    # --- 5. FILTROS EN BARRA LATERAL (CORREGIDOS) ---
     st.sidebar.header("🔍 Filtros de Control")
     search_sku = st.sidebar.text_input("🎯 SKU o Descripción").upper()
     
-    meses_op = sorted(so_raw['MES'].dropna().unique(), reverse=True) if not so_raw.empty else []
+    # Manejo seguro de nulos y tipos para sorted()
+    meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
     f_mes = st.sidebar.selectbox("📅 Mes de Análisis", ["Todos"] + meses_op)
     
-    dis_op = sorted(df_ma['DISCIPLINA'].unique()) if not df_ma.empty else []
+    dis_op = sorted([str(x) for x in df_ma['DISCIPLINA'].unique()]) if not df_ma.empty else []
     f_dis = st.sidebar.multiselect("👟 Disciplina", dis_op)
     
-    fra_op = sorted(df_ma['FRANJA_PRECIO'].unique()) if not df_ma.empty else []
+    fra_op = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique()]) if not df_ma.empty else []
     f_fra = st.sidebar.multiselect("💰 Franja de Precio", fra_op)
 
     def apply_filters(df, is_stock=False):
@@ -119,14 +122,12 @@ if data:
     si_f = apply_filters(si_raw)
 
     # --- 6. MÉTRICAS ---
-    st.title("📊 Turevientan")
+    st.title("📊 Torre de Control Dass v11.38")
     
-    # Stock Dass (Última fecha E para DASS en F)
     df_dass = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]
     max_d_dass = df_dass['FECHA_DT'].max()
     snap_dass = df_dass[df_dass['FECHA_DT'] == max_d_dass]
     
-    # Stock Cliente (Última fecha E para WHOLESALE en F)
     df_wh = stk_f[stk_f['CLIENTE_UP'].str.contains('WHOLESALE', na=False)]
     max_d_wh = df_wh['FECHA_DT'].max()
     snap_wh = df_wh[df_wh['FECHA_DT'] == max_d_wh]
@@ -168,15 +169,15 @@ if data:
     h_so = apply_filters(so_raw, is_stock=False).groupby('MES')['CANT'].sum().reset_index(name='SO')
     h_si = apply_filters(si_raw, is_stock=False).groupby('MES')['CANT'].sum().reset_index(name='SI')
     h_stk = apply_filters(stk_raw, is_stock=True)
-    h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS')].groupby('MES')['CANT'].sum().reset_index(name='SD')
-    h_sc = h_stk[h_stk['CLIENTE_UP'].str.contains('WHOLESALE')].groupby('MES')['CANT'].sum().reset_index(name='SC')
+    h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='SD')
+    h_sc = h_stk[h_stk['CLIENTE_UP'].str.contains('WHOLESALE', na=False)].groupby('MES')['CANT'].sum().reset_index(name='SC')
     df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
     
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SO'], name='Sell Out', line=dict(color='#0055A4', width=3)))
     fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SI'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
     fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SD'], name='Stock Dass', line=dict(color='#00A693')))
-    fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SC'], name='Stock Cliente', line=dict(color='#FFD700')))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SC'], name='Stock Cliente', line=dict(color='#FFD700')))
     st.plotly_chart(fig, use_container_width=True)
 
     # --- 9. TABLA ---
