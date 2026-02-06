@@ -7,9 +7,9 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v9.0", layout="wide")
+st.set_page_config(page_title="Dass Performance v9.1", layout="wide")
 
-# --- 1. COLORES Y CARGA (Mantenidos) ---
+# --- 1. CONFIGURACIÓN DE COLORES ---
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131',
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700',
@@ -44,69 +44,70 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. PROCESAMIENTO SELL OUT ---
-    so_raw = data.get('Sell_out', pd.DataFrame()).copy()
-    so_raw['SKU'] = so_raw['SKU'].astype(str).str.strip().str.upper()
-    so_raw['Cant'] = pd.to_numeric(so_raw['Unidades'], errors='coerce').fillna(0)
-    so_raw['Fecha_dt'] = pd.to_datetime(so_raw['Fecha'], dayfirst=True, errors='coerce')
-    so_raw['MesAnio'] = so_raw['Fecha_dt'].dt.to_period('M')
-
-    # --- 3. PROCESAMIENTO STOCK (Lógica de Mes más Actual) ---
-    stk_raw = data.get('Stock', pd.DataFrame()).copy()
-    stk_raw['SKU'] = stk_raw['SKU'].astype(str).str.strip().str.upper()
-    stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
-    stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
-    stk_raw['Cliente_limpio'] = stk_raw['Cliente'].fillna('').astype(str).str.upper()
-
-    # Identificamos la fecha más reciente del archivo
-    max_fecha_stock = stk_raw['Fecha_dt'].max()
-
-    # --- 4. FILTROS SIDEBAR ---
-    st.sidebar.header("🔍 Filtros de Gestión")
-    clis_all = sorted(list(set(so_raw['Cliente'].dropna().unique().tolist() + stk_raw['Cliente'].dropna().unique().tolist())))
-    f_cli = st.sidebar.multiselect("🤝 Clientes", [c for c in clis_all if "DASS" not in str(c)])
-    
-    # Aplicamos filtro de cliente si existe
-    so_f = so_raw[so_raw['Cliente'].isin(f_cli)] if f_cli else so_raw
-    stk_f = stk_raw[stk_raw['Cliente_limpio'].isin(f_cli)] if f_cli else stk_raw
-
-    # --- 5. LÓGICA DE CÁLCULO SOLICITADA ---
-    # A. Sell Out Total: Suma pura de unidades
-    so_sku = so_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Total'})
-    
-    # Max Mensual (Pico de suma mensual)
-    so_mensual = so_f.groupby(['SKU', 'MesAnio'])['Cant'].sum().reset_index()
-    max_3m = so_mensual.groupby('SKU')['Cant'].max().reset_index().rename(columns={'Cant': 'Max_Mensual_3M'})
-
-    # B. Stock Clientes: Mes más actual y NO DASS
-    stk_c_actual = stk_f[(~stk_f['Cliente_limpio'].str.contains('DASS')) & (stk_f['Fecha_dt'] == max_fecha_stock)]
-    # Si la fecha máxima no tiene datos para el filtro, usamos la última de cada SKU/Cliente
-    if stk_c_actual.empty:
-        stk_c_actual = stk_f[~stk_f['Cliente_limpio'].str.contains('DASS')].sort_values('Fecha_dt').groupby(['SKU', 'Cliente']).tail(1)
-    stk_c_sum = stk_c_actual.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
-
-    # C. Stock Dass: Mes más actual y SI DASS
-    stk_d_actual = stk_raw[(stk_raw['Cliente_limpio'].str.contains('DASS')) & (stk_raw['Fecha_dt'] == max_fecha_stock)]
-    if stk_d_actual.empty:
-        stk_d_actual = stk_raw[stk_raw['Cliente_limpio'].str.contains('DASS')].sort_values('Fecha_dt').groupby('SKU').tail(1)
-    stk_d_sum = stk_d_actual.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
-
-    # --- 6. UNIÓN CON MAESTRO ---
+    # --- 2. PROCESAMIENTO MAESTRO (Asegurar Columnas) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-    df = df_ma.merge(so_sku, on='SKU', how='left').merge(max_3m, on='SKU', how='left')
-    df = df.merge(stk_c_sum, on='SKU', how='left').merge(stk_d_sum, on='SKU', how='left').fillna(0)
+    if not df_ma.empty:
+        df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
+        # Normalizar Franja
+        col_f = next((c for c in df_ma.columns if any(x in c.upper() for x in ['FRANJA', 'SEGMENTO', 'PRECIO'])), None)
+        df_ma['FRANJA_PRECIO'] = df_ma[col_f].fillna('SIN CAT').astype(str).str.upper() if col_f else 'SIN CAT'
+        # Normalizar Disciplina
+        col_d = next((c for c in df_ma.columns if 'DISCIPLINA' in c.upper()), None)
+        df_ma['Disciplina'] = df_ma[col_d].fillna('OTRO').astype(str).str.upper() if col_d else 'OTRO'
+        # Normalizar Descripcion
+        if 'Descripcion' not in df_ma.columns: df_ma['Descripcion'] = 'SIN DESCRIPCION'
 
-    # Filtros de Maestro
-    f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df['Disciplina'].dropna().unique().tolist()))
-    f_fra = st.sidebar.multiselect("🏷️ Franjas", sorted(df['FRANJA_PRECIO'].dropna().unique().tolist()))
+    # --- 3. SELL OUT (Lógica Solicitada: Suma de Unidades) ---
+    so_raw = data.get('Sell_out', pd.DataFrame()).copy()
+    df_so_sku = pd.DataFrame(columns=['SKU', 'Sell out Total', 'Max_Mensual_3M'])
+    if not so_raw.empty:
+        so_raw['SKU'] = so_raw['SKU'].astype(str).str.strip().str.upper()
+        so_raw['Cant'] = pd.to_numeric(so_raw['Unidades'], errors='coerce').fillna(0)
+        so_raw['Fecha_dt'] = pd.to_datetime(so_raw['Fecha'], dayfirst=True, errors='coerce')
+        
+        # Suma Total
+        df_so_sku = so_raw.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Total'})
+        
+        # Max Mensual (Suma por mes y luego el pico)
+        so_raw['MesAnio'] = so_raw['Fecha_dt'].dt.to_period('M')
+        so_mensual = so_raw.groupby(['SKU', 'MesAnio'])['Cant'].sum().reset_index()
+        max_pico = so_mensual.groupby('SKU')['Cant'].max().reset_index().rename(columns={'Cant': 'Max_Mensual_3M'})
+        df_so_sku = df_so_sku.merge(max_pico, on='SKU', how='left')
+
+    # --- 4. STOCK (Lógica Solicitada: Fecha más Actual) ---
+    stk_raw = data.get('Stock', pd.DataFrame()).copy()
+    df_stk_cli = pd.DataFrame(columns=['SKU', 'Stock Clientes'])
+    df_stk_dass = pd.DataFrame(columns=['SKU', 'Stock Dass'])
+    if not stk_raw.empty:
+        stk_raw['SKU'] = stk_raw['SKU'].astype(str).str.strip().str.upper()
+        stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
+        stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
+        stk_raw['Cliente_up'] = stk_raw['Cliente'].fillna('').astype(str).str.upper()
+        
+        # Fecha más actual del archivo
+        max_f = stk_raw['Fecha_dt'].max()
+        stk_actual = stk_raw[stk_raw['Fecha_dt'] == max_f]
+        
+        # Separar Clientes vs Dass
+        df_stk_cli = stk_actual[~stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
+        df_stk_dass = stk_actual[stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+
+    # --- 5. UNIÓN Y FILTROS ---
+    df = df_ma.merge(df_so_sku, on='SKU', how='left').merge(df_stk_cli, on='SKU', how='left').merge(df_stk_dass, on='SKU', how='left').fillna(0)
+
+    st.sidebar.header("🔍 Filtros")
+    f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df['Disciplina'].unique().tolist()))
+    f_fra = st.sidebar.multiselect("🏷️ Franjas", sorted(df['FRANJA_PRECIO'].unique().tolist()))
+    sku_search = st.sidebar.text_input("📦 Buscar SKU")
+
     if f_dis: df = df[df['Disciplina'].isin(f_dis)]
     if f_fra: df = df[df['FRANJA_PRECIO'].isin(f_fra)]
+    if sku_search: df = df[df['SKU'].str.contains(sku_search.upper())]
 
-    # --- 7. DASHBOARD VISUAL ---
-    st.title("📊 Torre de Control Dass v9.0")
+    # --- 6. DASHBOARD ---
+    st.title("📊 Torre de Control Dass v9.1")
     
-    # KPIs
+    # KPIs con subtotales automáticos
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out Total", f"{df['Sell out Total'].sum():,.0f}")
     k2.metric("Stock Clientes (Actual)", f"{df['Stock Clientes'].sum():,.0f}")
@@ -129,13 +130,13 @@ if data:
     safe_pie(df, 'Sell out Total', 'Disciplina', "Sell Out / Dis", d2, True)
     safe_pie(df, 'Stock Clientes', 'Disciplina', "Stock Cliente / Dis", d3, True)
 
-    st.subheader("🏷️ Análisis por Franja Comercial")
+    st.subheader("🏷️ Análisis por Franja")
     f1, f2, f3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass / Franja", f1, False)
-    safe_pie(df, 'Sell out Total', 'FRANJA_PRECIO', "Sell Out / Franja", f2, False)
-    safe_pie(df, 'Stock Clientes', 'FRANJA_PRECIO', "Stock Cliente / Franja", f3, False)
+    safe_pie(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass / Franja", f1)
+    safe_pie(df, 'Sell out Total', 'FRANJA_PRECIO', "Sell Out / Franja", f2)
+    safe_pie(df, 'Stock Clientes', 'FRANJA_PRECIO', "Stock Cliente / Franja", f3)
 
-    # --- 8. TABLA ---
+    # --- 7. TABLA FINAL ---
     st.divider()
     df['MOS'] = np.where(df['Max_Mensual_3M'] > 0, df['Stock Clientes'] / df['Max_Mensual_3M'], 0)
     st.dataframe(
