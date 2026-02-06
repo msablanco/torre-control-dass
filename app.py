@@ -23,6 +23,7 @@ COLOR_MAP_FRA = {
     'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
 }
 
+# --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -30,9 +31,7 @@ def load_data():
         creds = service_account.Credentials.from_service_account_info(info)
         service = build('drive', 'v3', credentials=creds)
         folder_id = st.secrets["google_drive_folder_id"]
-        
         results = service.files().list(q=f"'{folder_id}' in parents and mimeType='text/csv'", fields="files(id, name)").execute()
-        
         dfs = {}
         for item in results.get('files', []):
             request = service.files().get_media(fileId=item['id'])
@@ -76,6 +75,7 @@ if data:
 
     so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
+    # --- 4. FILTROS ---
     st.sidebar.header("🔍 Filtros Globales")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
@@ -83,9 +83,9 @@ if data:
     opts_dis = sorted([str(x) for x in df_ma['DISCIPLINA'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
     f_dis = st.sidebar.multiselect("👟 Disciplinas", opts_dis)
     opts_fra = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
-    f_fra = st.sidebar.multiselect("💰 Franja de Precio", opts_fra)
-    f_cli_so = st.sidebar.multiselect("👤 Cliente Sell Out", sorted(so_raw['CLIENTE_UP'].unique()) if not so_raw.empty else [])
-    f_cli_si = st.sidebar.multiselect("📦 Cliente Sell In", sorted(si_raw['CLIENTE_UP'].unique()) if not si_raw.empty else [])
+    f_fra = st.sidebar.multiselect("💰 Franjas", opts_fra)
+    f_cli_so = st.sidebar.multiselect("👤 Cliente SO", sorted(so_raw['CLIENTE_UP'].unique()) if not so_raw.empty else [])
+    f_cli_si = st.sidebar.multiselect("📦 Cliente SI", sorted(si_raw['CLIENTE_UP'].unique()) if not si_raw.empty else [])
     selected_clients = set(f_cli_so) | set(f_cli_si)
 
     def apply_logic(df, filter_month=True):
@@ -129,10 +129,14 @@ if data:
         c3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     
     if not si_f.empty:
+        # Gráfico de barras con unidades reales y etiquetas de %
         df_bar_dis = si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index()
-        fig_bar_dis = px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In Historico (Participación %)", color_discrete_map=COLOR_MAP_DIS)
-        fig_bar_dis.update_traces(texttemplate='%{percent:.1%}', textposition='inside')
-        fig_bar_dis.update_layout(barnorm='percent', yaxis_title="Porcentaje %")
+        fig_bar_dis = px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Disciplina (con % Mix)", 
+                             color_discrete_map=COLOR_MAP_DIS, text_auto='.2s')
+        # Calculamos el porcentaje relativo a cada mes
+        fig_bar_dis.update_traces(textposition='inside')
+        # Esta línea permite que al pasar el mouse se vea el % relativo al grupo (mes)
+        fig_bar_dis.update_layout(barmode='stack', yaxis_title="Unidades")
         c4.plotly_chart(fig_bar_dis, use_container_width=True)
 
     st.subheader("💰 Análisis por Franja de Precio")
@@ -147,20 +151,21 @@ if data:
     
     if not si_f.empty:
         df_bar_fra = si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index()
-        fig_bar_fra = px.bar(df_bar_fra, x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In (Franja %)", color_discrete_map=COLOR_MAP_FRA)
-        fig_bar_fra.update_traces(texttemplate='%{percent:.1%}', textposition='inside')
-        fig_bar_fra.update_layout(barnorm='percent', yaxis_title="Porcentaje %")
+        fig_bar_fra = px.bar(df_bar_fra, x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja (con % Mix)", 
+                             color_discrete_map=COLOR_MAP_FRA, text_auto='.2s')
+        fig_bar_fra.update_traces(textposition='inside')
+        fig_bar_fra.update_layout(barmode='stack', yaxis_title="Unidades")
         f4.plotly_chart(fig_bar_fra, use_container_width=True)
 
     st.divider()
-    st.subheader("📈 Evolución Histórica (Ventas vs Stocks)")
+    st.subheader("📈 Evolución Histórica Comparativa")
     h_so = apply_logic(so_raw, False).groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Sell Out'})
     h_si = apply_logic(si_raw, False).groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Sell In'})
     stk_h_all = apply_logic(stk_raw, False)
     h_sd = stk_h_all[stk_h_all['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Stock Dass'})
     h_sc = stk_h_all[~stk_h_all['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Stock Cliente'})
-    
     df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
+    
     fig_h = go.Figure()
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
