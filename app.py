@@ -7,7 +7,7 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v9.1", layout="wide")
+st.set_page_config(page_title="Dass Performance v9.3", layout="wide")
 
 # --- 1. CONFIGURACIÓN DE COLORES ---
 COLOR_MAP_DIS = {
@@ -44,106 +44,118 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. PROCESAMIENTO MAESTRO (Asegurar Columnas) ---
+    # --- 2. PROCESAMIENTO MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    if not df_ma.empty:
-        df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-        # Normalizar Franja
-        col_f = next((c for c in df_ma.columns if any(x in c.upper() for x in ['FRANJA', 'SEGMENTO', 'PRECIO'])), None)
-        df_ma['FRANJA_PRECIO'] = df_ma[col_f].fillna('SIN CAT').astype(str).str.upper() if col_f else 'SIN CAT'
-        # Normalizar Disciplina
-        col_d = next((c for c in df_ma.columns if 'DISCIPLINA' in c.upper()), None)
-        df_ma['Disciplina'] = df_ma[col_d].fillna('OTRO').astype(str).str.upper() if col_d else 'OTRO'
-        # Normalizar Descripcion
-        if 'Descripcion' not in df_ma.columns: df_ma['Descripcion'] = 'SIN DESCRIPCION'
+    df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
+    col_f = next((c for c in df_ma.columns if any(x in c.upper() for x in ['FRANJA', 'SEGMENTO', 'PRECIO'])), 'FRANJA_PRECIO')
+    df_ma['FRANJA_PRECIO'] = df_ma[col_f].fillna('SIN CAT').astype(str).str.upper()
+    col_d = next((c for c in df_ma.columns if 'DISCIPLINA' in c.upper()), 'Disciplina')
+    df_ma['Disciplina'] = df_ma[col_d].fillna('OTRO').astype(str).str.upper()
 
-    # --- 3. SELL OUT (Lógica Solicitada: Suma de Unidades) ---
+    # --- 3. SELL OUT (SUMA PURA) ---
     so_raw = data.get('Sell_out', pd.DataFrame()).copy()
-    df_so_sku = pd.DataFrame(columns=['SKU', 'Sell out Total', 'Max_Mensual_3M'])
-    if not so_raw.empty:
-        so_raw['SKU'] = so_raw['SKU'].astype(str).str.strip().str.upper()
-        so_raw['Cant'] = pd.to_numeric(so_raw['Unidades'], errors='coerce').fillna(0)
-        so_raw['Fecha_dt'] = pd.to_datetime(so_raw['Fecha'], dayfirst=True, errors='coerce')
-        
-        # Suma Total
-        df_so_sku = so_raw.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Total'})
-        
-        # Max Mensual (Suma por mes y luego el pico)
-        so_raw['MesAnio'] = so_raw['Fecha_dt'].dt.to_period('M')
-        so_mensual = so_raw.groupby(['SKU', 'MesAnio'])['Cant'].sum().reset_index()
-        max_pico = so_mensual.groupby('SKU')['Cant'].max().reset_index().rename(columns={'Cant': 'Max_Mensual_3M'})
-        df_so_sku = df_so_sku.merge(max_pico, on='SKU', how='left')
+    so_raw['SKU'] = so_raw['SKU'].astype(str).str.strip().str.upper()
+    so_raw['Cant'] = pd.to_numeric(so_raw['Unidades'], errors='coerce').fillna(0)
+    so_raw['Fecha_dt'] = pd.to_datetime(so_raw['Fecha'], dayfirst=True, errors='coerce')
+    so_raw['MesAnio'] = so_raw['Fecha_dt'].dt.to_period('M')
+    
+    so_sku = so_raw.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Total'})
+    so_mensual = so_raw.groupby(['SKU', 'MesAnio'])['Cant'].sum().reset_index()
+    max_3m = so_mensual.groupby('SKU')['Cant'].max().reset_index().rename(columns={'Cant': 'Max_Mensual_3M'})
 
-    # --- 4. STOCK (Lógica Solicitada: Fecha más Actual) ---
+    # --- 4. STOCK (ÚLTIMA FECHA) ---
     stk_raw = data.get('Stock', pd.DataFrame()).copy()
-    df_stk_cli = pd.DataFrame(columns=['SKU', 'Stock Clientes'])
-    df_stk_dass = pd.DataFrame(columns=['SKU', 'Stock Dass'])
-    if not stk_raw.empty:
-        stk_raw['SKU'] = stk_raw['SKU'].astype(str).str.strip().str.upper()
-        stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
-        stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
-        stk_raw['Cliente_up'] = stk_raw['Cliente'].fillna('').astype(str).str.upper()
-        
-        # Fecha más actual del archivo
-        max_f = stk_raw['Fecha_dt'].max()
-        stk_actual = stk_raw[stk_raw['Fecha_dt'] == max_f]
-        
-        # Separar Clientes vs Dass
-        df_stk_cli = stk_actual[~stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
-        df_stk_dass = stk_actual[stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+    stk_raw['SKU'] = stk_raw['SKU'].astype(str).str.strip().str.upper()
+    stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
+    stk_raw['Fecha_dt'] = pd.to_datetime(stk_raw['Fecha'], dayfirst=True, errors='coerce')
+    stk_raw['Cliente_up'] = stk_raw['Cliente'].fillna('').astype(str).str.upper()
+    
+    max_f = stk_raw['Fecha_dt'].max()
+    stk_actual = stk_raw[stk_raw['Fecha_dt'] == max_f]
+    
+    stk_cli = stk_actual[~stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
+    stk_dass = stk_actual[stk_actual['Cliente_up'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
 
-    # --- 5. UNIÓN Y FILTROS ---
-    df = df_ma.merge(df_so_sku, on='SKU', how='left').merge(df_stk_cli, on='SKU', how='left').merge(df_stk_dass, on='SKU', how='left').fillna(0)
+    # --- 5. INGRESOS (SELL IN) ---
+    si_raw = data.get('Sell_in', pd.DataFrame()).copy()
+    si_raw['SKU'] = si_raw['SKU'].astype(str).str.strip().str.upper()
+    si_raw['Cant'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
+    si_raw['Fecha_Arrivo'] = pd.to_datetime(si_raw['Fecha_Arrivo'], dayfirst=True, errors='coerce')
+    si_raw['Mes_Arrivo'] = si_raw['Fecha_Arrivo'].dt.strftime('%Y-%m')
+    si_total = si_raw.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In Total'})
 
-    st.sidebar.header("🔍 Filtros")
+    # --- 6. UNIÓN Y BUSCADOR UNIVERSAL ---
+    df = df_ma.merge(so_sku, on='SKU', how='left').merge(max_3m, on='SKU', how='left')
+    df = df.merge(stk_cli, on='SKU', how='left').merge(stk_dass, on='SKU', how='left')
+    df = df.merge(si_total, on='SKU', how='left').fillna(0)
+
+    st.sidebar.header("🔍 Buscador y Filtros")
+    # El buscador universal ahora está arriba
+    search_query = st.sidebar.text_input("🔎 Buscador Universal (SKU, Desc, Franja, etc.)").upper()
+    
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df['Disciplina'].unique().tolist()))
     f_fra = st.sidebar.multiselect("🏷️ Franjas", sorted(df['FRANJA_PRECIO'].unique().tolist()))
-    sku_search = st.sidebar.text_input("📦 Buscar SKU")
+
+    # LÓGICA DE FILTRADO MULTI-COLUMNA
+    if search_query:
+        mask = (
+            df['SKU'].str.contains(search_query, na=False) |
+            df['Descripcion'].str.contains(search_query, na=False) |
+            df['Disciplina'].str.contains(search_query, na=False) |
+            df['FRANJA_PRECIO'].str.contains(search_query, na=False)
+        )
+        df = df[mask]
 
     if f_dis: df = df[df['Disciplina'].isin(f_dis)]
     if f_fra: df = df[df['FRANJA_PRECIO'].isin(f_fra)]
-    if sku_search: df = df[df['SKU'].str.contains(sku_search.upper())]
 
-    # --- 6. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v9.1")
+    # --- 7. DASHBOARD ---
+    st.title("📊 Torre de Control Dass v9.3")
     
-    # KPIs con subtotales automáticos
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out Total", f"{df['Sell out Total'].sum():,.0f}")
     k2.metric("Stock Clientes (Actual)", f"{df['Stock Clientes'].sum():,.0f}")
     k3.metric("Stock Dass (Actual)", f"{df['Stock Dass'].sum():,.0f}")
-    mos_g = df['Stock Clientes'].sum() / df['Max_Mensual_3M'].sum() if df['Max_Mensual_3M'].sum() > 0 else 0
-    k4.metric("MOS Global", f"{mos_g:.1f}")
+    k4.metric("Sell In Total", f"{df['Sell In Total'].sum():,.0f}")
 
-    def safe_pie(dataframe, val_col, name_col, title_str, col_target, use_map=False):
-        clean_df = dataframe[dataframe[val_col] > 0]
-        if not clean_df.empty:
-            fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str, 
-                         color=name_col if use_map else None,
-                         color_discrete_map=COLOR_MAP_DIS if use_map else None)
-            fig.update_traces(textinfo='percent+label')
-            col_target.plotly_chart(fig, use_container_width=True)
+    # --- GRAFICOS (FILA 1 Y 2) ---
+    def pie_chart(dataframe, val, name, title, target, colors=None):
+        sub = dataframe[dataframe[val] > 0]
+        if not sub.empty:
+            fig = px.pie(sub, values=val, names=name, title=title, color=name, color_discrete_map=colors)
+            target.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("📌 Análisis por Disciplina")
-    d1, d2, d3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass / Dis", d1, True)
-    safe_pie(df, 'Sell out Total', 'Disciplina', "Sell Out / Dis", d2, True)
-    safe_pie(df, 'Stock Clientes', 'Disciplina', "Stock Cliente / Dis", d3, True)
+    st.subheader("📌 Análisis por Disciplina e Ingresos")
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    pie_chart(df, 'Stock Dass', 'Disciplina', "Stock Dass", c1, COLOR_MAP_DIS)
+    pie_chart(df, 'Sell out Total', 'Disciplina', "Sell Out", c2, COLOR_MAP_DIS)
+    pie_chart(df, 'Stock Clientes', 'Disciplina', "Stock Cliente", c3, COLOR_MAP_DIS)
+    
+    si_dis = si_raw.merge(df_ma[['SKU', 'Disciplina']], on='SKU', how='left')
+    si_dis_grp = si_dis.groupby(['Mes_Arrivo', 'Disciplina'])['Cant'].sum().reset_index()
+    fig_bar_dis = px.bar(si_dis_grp, x='Mes_Arrivo', y='Cant', color='Disciplina', title="Ingresos x Mes", color_discrete_map=COLOR_MAP_DIS)
+    c4.plotly_chart(fig_bar_dis, use_container_width=True)
 
-    st.subheader("🏷️ Análisis por Franja")
-    f1, f2, f3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass / Franja", f1)
-    safe_pie(df, 'Sell out Total', 'FRANJA_PRECIO', "Sell Out / Franja", f2)
-    safe_pie(df, 'Stock Clientes', 'FRANJA_PRECIO', "Stock Cliente / Franja", f3)
+    st.subheader("🏷️ Análisis por Franja e Ingresos")
+    f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
+    pie_chart(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass", f1)
+    pie_chart(df, 'Sell out Total', 'FRANJA_PRECIO', "Sell Out", f2)
+    pie_chart(df, 'Stock Clientes', 'FRANJA_PRECIO', "Stock Cliente", f3)
+    
+    si_fra = si_raw.merge(df_ma[['SKU', 'FRANJA_PRECIO']], on='SKU', how='left')
+    si_fra_grp = si_fra.groupby(['Mes_Arrivo', 'FRANJA_PRECIO'])['Cant'].sum().reset_index()
+    fig_bar_fra = px.bar(si_fra_grp, x='Mes_Arrivo', y='Cant', color='FRANJA_PRECIO', title="Ingresos x Franja")
+    f4.plotly_chart(fig_bar_fra, use_container_width=True)
 
-    # --- 7. TABLA FINAL ---
+    # --- 8. TABLA DE DETALLE ---
     st.divider()
     df['MOS'] = np.where(df['Max_Mensual_3M'] > 0, df['Stock Clientes'] / df['Max_Mensual_3M'], 0)
+    
     st.dataframe(
-        df[['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 'Sell out Total', 'Max_Mensual_3M', 'Stock Clientes', 'MOS', 'Stock Dass']]
+        df[['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 'Sell out Total', 'Max_Mensual_3M', 'Stock Clientes', 'MOS', 'Stock Dass', 'Sell In Total']]
         .sort_values('Sell out Total', ascending=False).style.format({
-            'Sell out Total': '{:,.0f}', 'Max_Mensual_3M': '{:,.0f}', 
-            'Stock Clientes': '{:,.0f}', 'MOS': '{:.1f}', 'Stock Dass': '{:,.0f}'
+            'Sell out Total': '{:,.0f}', 'Max_Mensual_3M': '{:,.0f}', 'Stock Clientes': '{:,.0f}', 
+            'MOS': '{:.1f}', 'Stock Dass': '{:,.0f}', 'Sell In Total': '{:,.0f}'
         }).map(lambda v: 'background-color: #ffcccc' if v > 3 else ('background-color: #ccffcc' if 0 < v <= 1 else ''), subset=['MOS']),
         use_container_width=True, hide_index=True
     )
