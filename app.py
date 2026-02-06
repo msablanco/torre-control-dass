@@ -7,9 +7,9 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v7.2", layout="wide")
+st.set_page_config(page_title="Dass Performance v7.3", layout="wide")
 
-# --- MAPA DE COLORES FIJOS ---
+# --- MAPA DE COLORES FIJOS POR DISCIPLINA ---
 COLOR_MAP = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131',
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700',
@@ -38,20 +38,28 @@ def load_data():
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
-        st.error(f"Error crítico al cargar Drive: {e}")
-        return {} # Retornar diccionario vacío para evitar NameError
+        st.error(f"Error Drive: {e}")
+        return {}
 
-# Inicializar variable para evitar NameError
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO MAESTRO ---
+    # --- 1. PROCESAMIENTO MAESTRO (Fix de AttributeError) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    if not df_ma.empty:
-        df_ma['FRANJA_PRECIO'] = df_ma.get('FRANJA_PRECIO', 'SIN CATEGORIA').fillna('SIN CATEGORIA').astype(str).str.upper()
-        df_ma['Disciplina'] = df_ma.get('Disciplina', 'OTRO').fillna('OTRO').astype(str).str.upper()
+    
+    # Lógica segura para FRANJA_PRECIO
+    if 'FRANJA_PRECIO' in df_ma.columns:
+        df_ma['FRANJA_PRECIO'] = df_ma['FRANJA_PRECIO'].fillna('SIN CATEGORIA').astype(str).str.upper()
+    else:
+        df_ma['FRANJA_PRECIO'] = 'SIN CATEGORIA'
 
-    # --- 2. PROCESAMIENTO STOCK ---
+    # Lógica segura para Disciplina
+    if 'Disciplina' in df_ma.columns:
+        df_ma['Disciplina'] = df_ma['Disciplina'].fillna('OTRO').astype(str).str.upper()
+    else:
+        df_ma['Disciplina'] = 'OTRO'
+
+    # --- 2. STOCK (DASS vs CLIENTES) ---
     stk_raw = data.get('Stock', pd.DataFrame())
     st_dass_grp = pd.DataFrame(columns=['SKU', 'Stock Dass'])
     st_cli_grp = pd.DataFrame(columns=['SKU', 'Stock Clientes', 'Cliente'])
@@ -63,12 +71,12 @@ if data:
         st_dass_grp = stk_raw[mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
         st_cli_grp = stk_raw[~mask_dass].groupby(['SKU', 'Cliente'])['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
 
-    # --- 3. VENTAS ---
+    # --- 3. VENTAS (SELL IN / SELL OUT) ---
     si_raw = data.get('Sell_in', pd.DataFrame())
-    si_grp = si_raw.copy()
-    if not si_grp.empty:
-        si_grp['Sell in'] = pd.to_numeric(si_grp['Unidades'], errors='coerce').fillna(0)
-        si_grp = si_grp.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
+    si_grp = pd.DataFrame(columns=['SKU', 'Sell in', 'Cliente'])
+    if not si_raw.empty:
+        si_raw['Sell in'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
+        si_grp = si_raw.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
 
     so_raw = data.get('Sell_out', pd.DataFrame())
     so_final = pd.DataFrame(columns=['SKU', 'Sell out Clientes', 'Cliente'])
@@ -79,20 +87,21 @@ if data:
     # --- 4. FILTROS ---
     st.sidebar.header("🔍 Filtros")
     clis_all = sorted(list(set(si_grp['Cliente'].dropna().unique().tolist() + st_cli_grp['Cliente'].dropna().unique().tolist())))
-    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['DASS', '0', 'nan']])
+    f_cli = st.sidebar.multiselect("Seleccionar Cliente", [c for c in clis_all if str(c) not in ['DASS', '0', 'nan']])
     
     if f_cli:
         si_grp = si_grp[si_grp['Cliente'].isin(f_cli)]
         so_final = so_final[so_final['Cliente'].isin(f_cli)]
         st_cli_grp = st_cli_grp[st_cli_grp['Cliente'].isin(f_cli)]
     
-    # Merge Final
-    df = df_ma.merge(st_dass_grp, on='SKU', how='left').merge(si_grp.groupby('SKU')['Sell in'].sum().reset_index(), on='SKU', how='left')
+    # Merge Maestro + Stock Dass + Sell In + Sell Out + Stock Clientes
+    df = df_ma.merge(st_dass_grp, on='SKU', how='left')
+    df = df.merge(si_grp.groupby('SKU')['Sell in'].sum().reset_index(), on='SKU', how='left')
     df = df.merge(so_final.groupby('SKU')['Sell out Clientes'].sum().reset_index(), on='SKU', how='left')
     df = df.merge(st_cli_grp.groupby('SKU')['Stock Clientes'].sum().reset_index(), on='SKU', how='left').fillna(0)
 
-    # --- 5. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v7.2")
+    # --- 5. DASHBOARD VISUAL ---
+    st.title("📊 Torre de Control Dass v7.3")
 
     def safe_pie(dataframe, val_col, name_col, title_str, col_target, use_map=False):
         clean_df = dataframe[dataframe[val_col] > 0]
@@ -106,26 +115,33 @@ if data:
             col_target.warning(f"Sin datos: {title_str}")
 
     g1, g2, g3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass", g1, True)
-    safe_pie(df, 'Sell in', 'Disciplina', "Sell In", g2, True)
-    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out", g3, True)
+    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass Propio", g1, True)
+    safe_pie(df, 'Sell in', 'Disciplina', "Sell In (Lo que le vendimos)", g2, True)
+    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out (Lo que él vendió)", g3, True)
 
-    # --- 6. LA GRAN TABLA INTEGRADA ---
+    # --- 6. SUPER TABLA EJECUTIVA (VOLCADO TOTAL) ---
     st.divider()
-    st.subheader("🏆 Tabla Ejecutiva: Cruce de Ventas y Disponibilidad")
+    st.subheader("🏆 Resumen Ejecutivo por SKU")
     
-    total_so = df['Sell out Clientes'].sum()
-    df['% Share'] = np.where(total_so > 0, (df['Sell out Clientes'] / total_so) * 100, 0)
+    # Cálculos adicionales para la tabla
+    total_vta = df['Sell out Clientes'].sum()
+    df['% Share'] = np.where(total_vta > 0, (df['Sell out Clientes'] / total_vta) * 100, 0)
+    # WOS: Stock Cliente / (Venta Mensual / 4) -> Semanas de cobertura
     df['WOS'] = np.where(df['Sell out Clientes'] > 0, df['Stock Clientes'] / (df['Sell out Clientes'] / 4), 0)
 
-    cols_finales = ['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 'Sell in', 'Sell out Clientes', '% Share', 'Stock Clientes', 'WOS', 'Stock Dass']
+    # Reordenamos columnas para mostrar la "historia" completa del producto
+    cols_tabla = [
+        'SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 
+        'Sell in', 'Sell out Clientes', '% Share', 
+        'Stock Clientes', 'WOS', 'Stock Dass'
+    ]
     
     st.dataframe(
-        df[cols_finales].sort_values('Sell out Clientes', ascending=False).style.format({
+        df[cols_tabla].sort_values('Sell out Clientes', ascending=False).style.format({
             'Sell in': '{:,.0f}', 'Sell out Clientes': '{:,.0f}', '% Share': '{:.1f}%',
             'Stock Clientes': '{:,.0f}', 'WOS': '{:.1f}', 'Stock Dass': '{:,.0f}'
         }).map(lambda v: 'background-color: #ffcccc' if v > 4 else ('background-color: #ccffcc' if 0 < v <= 2 else ''), subset=['WOS']),
-        use_container_width=True
+        use_container_width=True, height=600
     )
 else:
-    st.warning("No se pudo cargar la variable 'data'. Revisa la conexión con Google Drive.")
+    st.warning("No hay datos disponibles. Verifique los archivos en Google Drive.")
