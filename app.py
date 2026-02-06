@@ -7,10 +7,10 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v7.5", layout="wide")
+st.set_page_config(page_title="Dass Performance v7.6", layout="wide")
 
-# --- MAPA DE COLORES FIJOS POR DISCIPLINA ---
-COLOR_MAP = {
+# --- MAPA DE COLORES FIJOS POR DISCIPLINA (MANTENIDO) ---
+COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131',
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700',
     'TENIS': '#FFD700', 'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513',
@@ -44,28 +44,22 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO MAESTRO (BUSQUEDA FLEXIBLE DE FRANJA) ---
+    # --- 1. PROCESAMIENTO MAESTRO (CONSERVANDO LÓGICA DE FRANJA v7.5) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-        
-        # Intentamos encontrar la columna de franja aunque cambie el nombre
         posibles_nombres = ['FRANJA_PRECIO', 'FRANJA', 'FRANJA PRECIO', 'SEGMENTO', 'Segmentacion']
         col_encontrada = next((c for c in df_ma.columns if c.upper() in posibles_nombres), None)
-        
         if col_encontrada:
             df_ma['FRANJA_PRECIO'] = df_ma[col_encontrada].fillna('SIN CATEGORIA').astype(str).str.upper()
         else:
-            df_ma['FRANJA_PRECIO'] = 'VERIFICAR COLUMNA'
-        
+            df_ma['FRANJA_PRECIO'] = 'SIN CATEGORIA'
         df_ma['Disciplina'] = df_ma.get('Disciplina', pd.Series(['OTRO']*len(df_ma))).fillna('OTRO').astype(str).str.upper()
 
-    # --- 2. STOCK (DASS vs CLIENTES) ---
+    # --- 2. STOCK (CONSERVANDO LÓGICA CLIENTE DASS) ---
     stk_raw = data.get('Stock', pd.DataFrame()).copy()
     st_dass_grp = pd.DataFrame(columns=['SKU', 'Stock Dass'])
     st_cli_grp = pd.DataFrame(columns=['SKU', 'Stock Clientes', 'Cliente'])
-    
     if not stk_raw.empty:
         stk_raw['SKU'] = stk_raw['SKU'].astype(str).str.strip().str.upper()
         stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
@@ -86,51 +80,48 @@ if data:
     st.sidebar.header("🔍 Filtros de Gestión")
     clis_all = sorted(list(set(so_final['Cliente'].dropna().unique().tolist() + st_cli_grp['Cliente'].dropna().unique().tolist())))
     f_cli = st.sidebar.multiselect("Seleccionar Cliente", [c for c in clis_all if str(c) not in ['DASS', '0', 'nan']])
-    
     if f_cli:
         so_final = so_final[so_final['Cliente'].isin(f_cli)]
         st_cli_grp = st_cli_grp[st_cli_grp['Cliente'].isin(f_cli)]
     
-    # --- 5. MERGE TOTAL ---
+    # --- 5. MERGE TOTAL (BASE MAESTRO) ---
     so_sum = so_final.groupby('SKU')['Sell out Clientes'].sum().reset_index()
     st_cli_sum = st_cli_grp.groupby('SKU')['Stock Clientes'].sum().reset_index()
-    
-    # Unimos partiendo del MAESTRO para no perder la FRANJA
-    df = df_ma.merge(st_dass_grp, on='SKU', how='left')
-    df = df.merge(so_sum, on='SKU', how='left')
-    df = df.merge(st_cli_sum, on='SKU', how='left')
-    df = df.fillna(0)
+    df = df_ma.merge(st_dass_grp, on='SKU', how='left').merge(so_sum, on='SKU', how='left').merge(st_cli_sum, on='SKU', how='left').fillna(0)
 
-    # --- 6. VISUALIZACIÓN (RESTAURADA) ---
-    st.title("📊 Torre de Control Dass v7.5")
+    # --- 6. VISUALIZACIÓN ---
+    st.title("📊 Torre de Control Dass v7.6")
 
     def safe_pie(dataframe, val_col, name_col, title_str, col_target, use_map=False):
         clean_df = dataframe[dataframe[val_col] > 0]
         if not clean_df.empty:
             fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str, 
                          color=name_col if use_map else None,
-                         color_discrete_map=COLOR_MAP if use_map else None)
+                         color_discrete_map=COLOR_MAP_DIS if use_map else None)
             fig.update_traces(textinfo='percent+label')
             col_target.plotly_chart(fig, use_container_width=True)
         else:
             col_target.warning(f"Sin datos: {title_str}")
 
+    # FILA 1: DISCIPLINA (Tu pedido de no borrar nada anterior)
     st.subheader("📌 Participación por Disciplina")
-    g1, g2, g3 = st.columns(3)
-    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass Propio", g1, True)
-    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out (Venta Cliente)", g2, True)
-    # Agrego el tercero que faltaba para completar la fila
-    safe_pie(df, 'Stock Clientes', 'Disciplina', "Stock en Cliente", g3, True)
+    d1, d2, d3 = st.columns(3)
+    safe_pie(df, 'Stock Dass', 'Disciplina', "Stock Dass Propio", d1, True)
+    safe_pie(df, 'Sell out Clientes', 'Disciplina', "Sell Out (Venta)", d2, True)
+    safe_pie(df, 'Stock Clientes', 'Disciplina', "Stock en Cliente", d3, True)
 
-    # --- 7. TABLA INTEGRADA (CON FRANJA) ---
+    # FILA 2: FRANJA (La nueva incorporación exactamente igual)
+    st.subheader("🏆 Participación por Franja Comercial")
+    f1, f2, f3 = st.columns(3)
+    safe_pie(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass por Franja", f1, False)
+    safe_pie(df, 'Sell out Clientes', 'FRANJA_PRECIO', "Sell Out por Franja", f2, False)
+    safe_pie(df, 'Stock Clientes', 'FRANJA_PRECIO', "Stock Cliente por Franja", f3, False)
+
+    # --- 7. TABLA INTEGRADA (MANTENIDA v7.5) ---
     st.divider()
     st.subheader("🏆 Resumen por SKU: Ventas vs Disponibilidad")
-    
     df['WOS'] = np.where(df['Sell out Clientes'] > 0, df['Stock Clientes'] / (df['Sell out Clientes'] / 4), 0)
-    
     cols_tabla = ['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 'Sell out Clientes', 'Stock Clientes', 'WOS', 'Stock Dass']
-    
-    # Filtramos para que la tabla no sea infinita (solo items con algo de stock o venta)
     df_ver = df[(df['Sell out Clientes'] > 0) | (df['Stock Clientes'] > 0) | (df['Stock Dass'] > 0)]
 
     st.dataframe(
@@ -140,4 +131,4 @@ if data:
         }), use_container_width=True, height=500
     )
 else:
-    st.error("No se detectaron datos en las fuentes de Google Drive.")
+    st.error("Error al cargar datos.")
