@@ -10,12 +10,22 @@ import plotly.express as px
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
 
-# --- 1. CONFIGURACIÓN VISUAL ---
+# --- 1. CONFIGURACIÓN VISUAL (MAPAS DE COLORES CONSISTENTES) ---
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 
     'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000',
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
+}
+
+# Mapa de colores fijo para Franjas de Precio
+COLOR_MAP_FRA = {
+    'PINNACLE': '#4B0082', # Indigo
+    'BEST': '#1E90FF',     # DodgerBlue
+    'BETTER': '#32CD32',   # LimeGreen
+    'GOOD': '#FF8C00',     # DarkOrange
+    'CORE': '#696969',     # DimGray
+    'SIN CATEGORIA': '#D3D3D3'
 }
 
 @st.cache_data(ttl=600)
@@ -35,7 +45,7 @@ def load_data():
             while not done: _, done = downloader.next_chunk()
             fh.seek(0)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
-            # Normalización de nombres de columnas
+            # Normalización de columnas para evitar problemas de acentos o espacios
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
@@ -45,18 +55,18 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO (Blindado) ---
+    # --- 2. PROCESAMIENTO DEL MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        # Aseguramos existencia de columnas y manejamos nulos para evitar TypeErrors
+        # Aseguramos que existan las columnas clave y manejamos nulos
         for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'FRANJA_PRECIO': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION']
 
-    # --- 3. LIMPIEZA DE ARCHIVOS DE MOVIMIENTO ---
+    # --- 3. LIMPIEZA DE DATOS DE MOVIMIENTO ---
     def clean_df(name):
         df = data.get(name, pd.DataFrame()).copy()
         if df.empty: return pd.DataFrame(columns=['SKU', 'CANT', 'MES', 'FECHA_DT', 'CLIENTE_UP'])
@@ -76,14 +86,13 @@ if data:
     si_raw = clean_df('Sell_in')
     stk_raw = clean_df('Stock')
 
-    # --- 4. FILTROS (Blindados contra TypeError) ---
-    st.sidebar.header("🔍 Filtros de Cadena")
+    # --- 4. FILTROS (CON BLINDAJE PARA EL ORDENAMIENTO) ---
+    st.sidebar.header("🔍 Filtros Globales")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     
-    meses_op = sorted(list(set(so_raw['MES'].dropna())), reverse=True) if not so_raw.empty else []
+    meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
     f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + meses_op)
     
-    # Blindaje con str(x) para sorted()
     opts_dis = sorted([str(x) for x in df_ma['DISCIPLINA'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
     f_dis = st.sidebar.multiselect("👟 Disciplinas", opts_dis)
     
@@ -99,18 +108,19 @@ if data:
         if df.empty: return df
         temp = df.copy()
         
-        # Merge con Maestro para traer atributos
+        # Asociación con Maestro (VLOOKUP)
         temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
         
-        # Relleno de nulos para SKUs no encontrados
+        # Relleno de SKUs que no están en el maestro
         temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
         temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
         temp['DESCRIPCION'] = temp['DESCRIPCION'].fillna('SKU FUERA DE MAESTRO')
 
-        # Aplicación de filtros
+        # Aplicación de filtros en cascada
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
-        if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False) | temp['SKU'].str.contains(search_query, na=False)]
+        if search_query: 
+            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False) | temp['SKU'].str.contains(search_query, na=False)]
         
         if filter_month and f_periodo != "Todos":
             temp = temp[temp['MES'] == f_periodo]
@@ -124,7 +134,7 @@ if data:
     si_f = apply_logic(si_raw)
     stk_f = apply_logic(stk_raw)
 
-    # --- 5. DASHBOARD PRINCIPAL ---
+    # --- 5. DASHBOARD: INDICADORES CLAVE ---
     st.title("📊 Torre de Control Dass v11.38")
     
     max_date = stk_f['FECHA_DT'].max() if not stk_f.empty else None
@@ -140,7 +150,7 @@ if data:
     val_cli = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
     k4.metric("Stock Cliente", f"{val_cli:,.0f}")
 
-    # --- 6. SECCIÓN DISCIPLINA ---
+    # --- 6. SECCIÓN: ANÁLISIS POR DISCIPLINA ---
     st.divider()
     st.subheader("📌 Análisis por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -154,20 +164,20 @@ if data:
     if not si_f.empty:
         c4.plotly_chart(px.bar(si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='DISCIPLINA', title="Sell In Historico", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
-    # --- 7. SECCIÓN FRANJA DE PRECIO (Nueva Modificación) ---
+    # --- 7. SECCIÓN: ANÁLISIS POR FRANJA DE PRECIO (CON CONSISTENCIA DE COLOR) ---
     st.subheader("💰 Análisis por Franja de Precio")
     f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
     
     if val_dass > 0:
-        f1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)"), use_container_width=True)
+        f1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     if not so_f.empty:
-        f2.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)"), use_container_width=True)
+        f2.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     if val_cli > 0:
-        f3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)"), use_container_width=True)
+        f3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     if not si_f.empty:
-        f4.plotly_chart(px.bar(si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In (Franja)"), use_container_width=True)
+        f4.plotly_chart(px.bar(si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In (Franja)", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
 
-    # --- 8. LÍNEA DE TIEMPO ---
+    # --- 8. LÍNEA DE TIEMPO: EVOLUCIÓN HISTÓRICA ---
     st.divider()
     st.subheader("📈 Evolución Histórica (Ventas vs Stocks)")
     so_h = apply_logic(so_raw, filter_month=False).groupby('MES')['CANT'].sum().reset_index().rename(columns={'CANT': 'Sell Out'})
@@ -195,13 +205,12 @@ if data:
     t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
     t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
     
-    # Armado de tabla final cruzando con atributos del maestro
     df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
     
-    # Filtro para no mostrar filas vacías
+    # Mostrar solo SKUs que tengan algún movimiento o stock
     df_final = df_final[(df_final['Sell Out Total'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Sell In Total'] > 0)]
     
     st.dataframe(df_final.sort_values('Sell Out Total', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.error("No se detectaron archivos en la carpeta de Google Drive configurada.")
+    st.error("No se detectaron archivos en la carpeta de Google Drive. Verifica la configuración.")
