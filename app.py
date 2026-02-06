@@ -7,14 +7,10 @@ import io
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v11.9", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.10", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL ---
-COLOR_MAP_DIS = {
-    'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
-    'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 
-    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'
-}
+COLOR_MAP_DIS = {'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'}
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -42,13 +38,12 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO (PROCESAMIENTO SEGURO) ---
+    # --- 2. MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        columnas_esperadas = {'Disciplina': 'OTRO', 'FRANJA_PRECIO': 'SIN CAT', 'Descripcion': 'SIN DESCRIPCION'}
-        for col, default in columnas_esperadas.items():
+        for col, default in {'Disciplina': 'OTRO', 'FRANJA_PRECIO': 'SIN CAT', 'Descripcion': 'SIN DESCRIPCION'}.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['Busqueda'] = df_ma['SKU'] + " " + df_ma['Descripcion']
@@ -68,7 +63,7 @@ if data:
 
     so_all, si_all, stk_all = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
-    # --- 4. SIDEBAR & FILTROS ---
+    # --- 4. SIDEBAR ---
     st.sidebar.header("🔍 Filtros")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + sorted(list(set(so_all['Mes'].dropna())), reverse=True))
@@ -92,14 +87,8 @@ if data:
     so_f, si_f, stk_f = apply_final_filters(so_all, 'SO'), apply_final_filters(si_all, 'SI'), apply_final_filters(stk_all)
 
     # --- 5. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v11.9")
+    st.title("📊 Torre de Control Dass v11.10")
     
-    with st.expander("💡 Tips de Análisis de Performance"):
-        st.markdown("""
-        * **Rotación en Góndola:** Si el **Stock Cliente** (Amarillo) sube y el **Sell Out** (Azul) baja, el producto no está rotando.
-        * **Flujo de Facturación:** Si el **Sell In** (Rojo) tiene picos pero el **Stock Dass** (Verde) no sube, la mercadería fluye rápido.
-        """)
-
     max_date = stk_f['Fecha_dt'].max() if not stk_f.empty else None
     stk_snap = stk_f[stk_f['Fecha_dt'] == max_date] if max_date else pd.DataFrame()
 
@@ -109,7 +98,7 @@ if data:
     k3.metric("Stock Dass", f"{stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
     k4.metric("Stock Cliente", f"{stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
 
-    # --- 6. ANÁLISIS POR DISCIPLINA ---
+    # --- 6. GRÁFICOS ---
     st.subheader("📌 Distribución por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     if not stk_snap.empty:
@@ -122,8 +111,7 @@ if data:
 
     # --- 7. LÍNEA DE TIEMPO 4D ---
     st.divider()
-    st.subheader("📈 Evolución Histórica: Ventas, Facturación y Stocks")
-    
+    st.subheader("📈 Evolución Histórica")
     so_h = apply_final_filters(so_all, 'SO', False).groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out'})
     si_h = apply_final_filters(si_all, 'SI', False).groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In'})
     stk_h_raw = apply_final_filters(stk_all, None, False)
@@ -136,21 +124,56 @@ if data:
     fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
     fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Stock Dass'], name='Stock Dass', line=dict(color='#00A693', width=2)))
     fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Stock Cliente'], name='Stock Cliente', line=dict(color='#FFD700', width=2)))
-    fig.update_layout(height=450, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"))
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 8. TABLA MEJORADA (ESTILO DINÁMICO) ---
+    # --- 8. TABLA ANALÍTICA RECONSTRUIDA ---
     st.divider()
-    st.subheader("📋 Detalle de Productos (Sell Out)")
-    df_tabla = so_f.groupby(['SKU', 'Descripcion', 'Disciplina']).agg({'Cant': 'sum'}).reset_index().sort_values('Cant', ascending=False)
+    st.subheader("📋 Detalle de Inventario y Ventas")
     
+    # 8.1 Cálculo de métricas avanzadas por SKU
+    # Sell Out Total (del filtro actual)
+    t_so = so_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out Total'})
+    
+    # Max Mensual 3 Meses (Cálculo histórico)
+    so_hist = apply_final_filters(so_all, 'SO', False)
+    # Tomamos los últimos 3 meses disponibles
+    meses_3 = sorted(so_hist['Mes'].unique())[-3:]
+    t_max = so_hist[so_hist['Mes'].isin(meses_3)].groupby(['SKU', 'Mes'])['Cant'].sum().reset_index()
+    t_max = t_max.groupby('SKU')['Cant'].max().reset_index().rename(columns={'Cant': 'Max_Mensual_3M'})
+    
+    # Sell In Total
+    t_si = si_f.groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In Total'})
+    
+    # Stocks (Dass y Cliente)
+    t_stk_d = stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
+    t_stk_c = stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Cliente'})
+
+    # 8.2 Consolidación final
+    df_final = df_ma[['SKU', 'Descripcion', 'Disciplina']].copy()
+    df_final = df_final.merge(t_so, on='SKU', how='left')
+    df_final = df_final.merge(t_max, on='SKU', how='left')
+    df_final = df_final.merge(t_stk_c, on='SKU', how='left')
+    df_final = df_final.merge(t_stk_d, on='SKU', how='left')
+    df_final = df_final.merge(t_si, on='SKU', how='left').fillna(0)
+
+    # Cálculo de MOS (Month on Supply) = Stock Clientes / Max_Mensual_3M
+    df_final['MOS'] = (df_final['Stock Cliente'] / df_final['Max_Mensual_3M']).replace([float('inf'), -float('inf')], 0).fillna(0)
+    
+    # Filtrar solo SKUs que tengan algún movimiento para no mostrar tabla vacía de 10.000 filas
+    df_final = df_final[(df_final['Sell Out Total'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0)]
+
+    # 8.3 Renderizado de Tabla
     st.dataframe(
-        df_tabla,
+        df_final.sort_values('Sell Out Total', ascending=False),
         use_container_width=True,
         hide_index=True,
         column_config={
-            "SKU": st.column_config.TextColumn("Código SKU"),
-            "Cant": st.column_config.NumberColumn("Unidades", format="%d 👟", help="Suma de unidades vendidas"),
-            "Disciplina": st.column_config.TextColumn("Categoría")
+            "SKU": st.column_config.TextColumn("SKU"),
+            "MOS": st.column_config.NumberColumn("MOS", format="%.1f", help="Meses de Cobertura (Stock Cliente / Max 3M)"),
+            "Sell Out Total": st.column_config.NumberColumn("Venta Total"),
+            "Max_Mensual_3M": st.column_config.NumberColumn("Max Mes (3M)"),
+            "Stock Cliente": st.column_config.NumberColumn("Stock Cli"),
+            "Stock Dass": st.column_config.NumberColumn("Stock Dass"),
+            "Sell In Total": st.column_config.NumberColumn("Facturación")
         }
     )
