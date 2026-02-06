@@ -7,7 +7,7 @@ import io
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v11.24", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.25", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {
@@ -42,7 +42,7 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO (Mapeo de Atributos) ---
+    # --- 2. PROCESAMIENTO MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -56,9 +56,9 @@ if data:
     # --- 3. LIMPIEZA DE TRANSACCIONES ---
     def clean_df(name):
         df = data.get(name, pd.DataFrame()).copy()
-        if df.empty: return pd.DataFrame()
-        df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+        if df.empty: return pd.DataFrame(columns=['SKU', 'Cant', 'Mes', 'Fecha_dt', 'Emprendimiento', 'Cliente_up'])
         
+        df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
         c_cant = next((c for c in df.columns if any(x in c.upper() for x in ['UNID', 'CANT'])), 'Cant')
         df['Cant'] = pd.to_numeric(df[c_cant], errors='coerce').fillna(0)
         
@@ -66,33 +66,40 @@ if data:
         df['Fecha_dt'] = pd.to_datetime(df[c_fecha], dayfirst=True, errors='coerce')
         df['Mes'] = df['Fecha_dt'].dt.strftime('%Y-%m')
         
-        # Columna Emprendimiento (Crucial para Stock)
+        # Lógica de Emprendimiento mejorada
         if 'EMPRENDIMIENTO' in df.columns:
             df['Emprendimiento'] = df['EMPRENDIMIENTO'].fillna('OTROS').astype(str).str.upper().str.strip()
         else:
-            df['Emprendimiento'] = 'CLIENTES' # Default si no existe la columna todavía
-            
+            # Si no está la columna, intentamos deducir por el nombre del cliente
+            c_cli = next((c for c in df.columns if 'CLIENTE' in c.upper()), 'Cliente')
+            df['Cliente_up'] = df.get(c_cli, 'DESCONOCIDO').fillna('DESCONOCIDO').astype(str).str.upper()
+            df['Emprendimiento'] = df['Cliente_up'].apply(lambda x: 'DASS CENTRAL' if 'DASS' in x else 'CLIENTES')
+        
         return df
 
     so_f = clean_df('Sell_out')
     si_f = clean_df('Sell_in')
     stk_f = clean_df('Stock')
 
-    # --- 4. FILTROS ---
-    st.sidebar.header("🔍 Filtros Globales")
-    f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + sorted(list(set(so_f['Mes'].dropna())), reverse=True))
+    # --- 4. FILTROS SIDEBAR ---
+    st.sidebar.header("🔍 Filtros de Negocio")
+    f_periodo = st.sidebar.selectbox("📅 Mes de Análisis", ["Todos"] + sorted(list(set(so_f['Mes'].dropna())), reverse=True))
     f_dis = st.sidebar.multiselect("👟 Disciplina", sorted(df_ma['Disciplina'].unique()))
-    f_franja = st.sidebar.multiselect("💰 Franja", sorted(df_ma['FRANJA_PRECIO'].unique()))
+    f_franja = st.sidebar.multiselect("💰 Franja de Precio", sorted(df_ma['FRANJA_PRECIO'].unique()))
     
-    # Filtro dinámico de Emprendimiento (Para ver solo Clientes, Retail, etc.)
-    f_emp = st.sidebar.multiselect("🏢 Emprendimiento", sorted(stk_f['Emprendimiento'].unique()) if not stk_f.empty else [])
+    # NUEVO FILTRO SOLICITADO
+    opciones_emp = sorted(stk_f['Emprendimiento'].unique()) if not stk_f.empty else []
+    f_emp = st.sidebar.multiselect("🏢 Emprendimiento (Stock)", opciones_emp)
 
-    def apply_filters(df, is_stk=False):
+    def apply_filters(df, filter_month=True):
         if df.empty: return df
         temp = df.merge(df_ma[['SKU', 'Disciplina', 'FRANJA_PRECIO', 'Descripcion', 'Busqueda']], on='SKU', how='left')
+        temp['Disciplina'] = temp['Disciplina'].fillna('OTRO')
+        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CAT')
+        
         if f_dis: temp = temp[temp['Disciplina'].isin(f_dis)]
         if f_franja: temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
-        if f_periodo != "Todos" and 'Mes' in temp.columns: temp = temp[temp['Mes'] == f_periodo]
+        if filter_month and f_periodo != "Todos": temp = temp[temp['Mes'] == f_periodo]
         if f_emp and 'Emprendimiento' in temp.columns: temp = temp[temp['Emprendimiento'].isin(f_emp)]
         return temp
 
@@ -100,58 +107,61 @@ if data:
     si_filt = apply_filters(si_f)
     stk_filt = apply_filters(stk_f)
 
-    # --- 5. VISUALIZACIÓN ---
+    # --- 5. TABS ---
     tab_control, tab_intel = st.tabs(["📊 Torre de Control", "🚨 Abastecimiento"])
 
     with tab_control:
-        # Foto Stock
+        # Foto actual para KPIs y Tortas
         max_date = stk_filt['Fecha_dt'].max() if not stk_filt.empty else None
         stk_snap = stk_filt[stk_filt['Fecha_dt'] == max_date].copy() if max_date else pd.DataFrame()
 
-        # Separación por Emprendimiento
-        df_central = stk_snap[stk_snap['Emprendimiento'] == 'DASS CENTRAL']
-        df_clientes = stk_snap[stk_snap['Emprendimiento'] == 'CLIENTES']
-        df_retail = stk_snap[stk_snap['Emprendimiento'].isin(['RETAIL', 'E-COM'])]
+        # División de Stock por Emprendimiento
+        df_dass = stk_snap[stk_snap['Emprendimiento'] == 'DASS CENTRAL']
+        df_clie = stk_snap[stk_snap['Emprendimiento'] == 'CLIENTES']
 
-        # KPIs
+        # KPIs Principales
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Sell Out", f"{so_filt['Cant'].sum():,.0f}")
-        k2.metric("Stock Central", f"{df_central['Cant'].sum():,.0f}")
-        k3.metric("Stock Clientes", f"{df_clientes['Cant'].sum():,.0f}")
-        k4.metric("Stock Propio (DTC)", f"{df_retail['Cant'].sum():,.0f}")
+        k2.metric("Sell In", f"{si_filt['Cant'].sum():,.0f}")
+        k3.metric("Stock Dass Central", f"{df_dass['Cant'].sum():,.0f}")
+        k4.metric("Stock Clientes", f"{df_clie['Cant'].sum():,.0f}")
 
         # --- FILA 1: DISCIPLINAS ---
-        st.subheader("📌 Stock y Venta por Disciplina")
+        st.subheader("📌 Análisis por Disciplina")
         c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-        c1.plotly_chart(px.pie(df_central.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Dass Central", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-        c2.plotly_chart(px.pie(so_filt.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-        c3.plotly_chart(px.pie(df_clientes.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stock Clientes", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        c1.plotly_chart(px.pie(df_dass.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stk Dass Central", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        c2.plotly_chart(px.pie(so_filt.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Venta (Sell Out)", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        c3.plotly_chart(px.pie(df_clie.groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stk Clientes", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
         c4.plotly_chart(px.bar(si_filt.groupby(['Mes', 'Disciplina'])['Cant'].sum().reset_index(), x='Mes', y='Cant', color='Disciplina', title="Sell In Mensual", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
         # --- FILA 2: FRANJAS ---
-        st.subheader("💰 Stock y Venta por Franja")
+        st.subheader("💰 Análisis por Franja")
         f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
-        f1.plotly_chart(px.pie(df_central.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), values='Cant', names='FRANJA_PRECIO', title="Dass Central"), use_container_width=True)
+        f1.plotly_chart(px.pie(df_dass.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), values='Cant', names='FRANJA_PRECIO', title="Stk Dass Central"), use_container_width=True)
         f2.plotly_chart(px.pie(so_filt.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), values='Cant', names='FRANJA_PRECIO', title="Sell Out"), use_container_width=True)
-        f3.plotly_chart(px.pie(df_clientes.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), values='Cant', names='FRANJA_PRECIO', title="Stock Clientes"), use_container_width=True)
+        f3.plotly_chart(px.pie(df_clie.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), values='Cant', names='FRANJA_PRECIO', title="Stk Clientes"), use_container_width=True)
         f4.plotly_chart(px.bar(si_filt.groupby(['Mes', 'FRANJA_PRECIO'])['Cant'].sum().reset_index(), x='Mes', y='Cant', color='FRANJA_PRECIO', title="Sell In por Franja"), use_container_width=True)
 
-        # --- LÍNEA DE TIEMPO ---
+        # --- LÍNEA DE TIEMPO (RECONSTRUIDA) ---
         st.divider()
-        st.subheader("📈 Evolución de Stocks y Salida")
-        # Agrupar histórico por mes y emprendimiento
-        stk_h = stk_filt.groupby(['Mes', 'Emprendimiento'])['Cant'].sum().reset_index()
-        so_h = so_filt.groupby('Mes')['Cant'].sum().reset_index()
+        st.subheader("📈 Evolución Histórica de Stocks y Ventas")
+        # Para la línea de tiempo NO filtramos por mes de la sidebar (usamos apply_filters con False)
+        stk_h = apply_filters(stk_f, filter_month=False).groupby(['Mes', 'Emprendimiento'])['Cant'].sum().reset_index()
+        so_h = apply_filters(so_f, filter_month=False).groupby('Mes')['Cant'].sum().reset_index()
         
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=so_h['Mes'], y=so_h['Cant'], name='Venta (Sell Out)', line=dict(color='#0055A4', width=4)))
+        # Línea de Venta
+        fig.add_trace(go.Scatter(x=so_h['Mes'], y=so_h['Cant'], name='SELL OUT (Venta)', line=dict(color='#0055A4', width=4)))
+        # Líneas dinámicas por cada Emprendimiento de Stock
         for emp in stk_h['Emprendimiento'].unique():
-            df_e = stk_h[stk_h['Emprendimiento'] == emp]
-            fig.add_trace(go.Scatter(x=df_e['Mes'], y=df_e['Cant'], name=f"Stock {emp}"))
+            df_emp_h = stk_h[stk_h['Emprendimiento'] == emp]
+            fig.add_trace(go.Scatter(x=df_emp_h['Mes'], y=df_emp_h['Cant'], name=f"STOCK {emp}", mode='lines+markers'))
+        
+        fig.update_layout(hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
         st.plotly_chart(fig, use_container_width=True)
 
     with tab_intel:
-        st.header("🎯 Sugerencia de Reposición para Clientes")
-        # Aquí filtramos la lógica solo para abastecer el canal Clientes
-        st.info("Cálculo basado en reponer el stock necesario para cubrir la venta máxima de Clientes.")
-        # (Lógica de tabla de abastecimiento...)
+        st.header("🎯 Inteligencia de Abastecimiento")
+        # Muestra tabla simple para validar datos
+        st.write("Datos procesados para sugerencia:")
+        st.dataframe(so_filt.groupby('SKU')['Cant'].sum().reset_index().sort_values('Cant', ascending=False), use_container_width=True)
