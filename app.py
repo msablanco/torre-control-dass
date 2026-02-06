@@ -7,15 +7,18 @@ import io
 import plotly.graph_objects as go
 import plotly.express as px
 
+# Configuración de página
 st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
 
-# --- 1. CARGA Y CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN DE COLORES (ESTRICTO) ---
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 
-    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000'
+    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000',
+    'OTRO': '#D3D3D3', 'SIN CAT': '#E5E5E5'
 }
 
+# --- 2. FUNCIONES DE CARGA Y LIMPIEZA ---
 @st.cache_data(ttl=600)
 def load_data():
     try:
@@ -39,10 +42,28 @@ def load_data():
     except Exception as e:
         st.error(f"Error Drive: {e}"); return {}
 
+def clean_df(df, name):
+    if df.empty: return pd.DataFrame()
+    df = df.copy()
+    # Estandarizar SKU
+    df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+    # Estandarizar Cantidades
+    c_cant = next((c for c in df.columns if any(x in c for x in ['UNID', 'CANT'])), 'CANT')
+    df['Cant'] = pd.to_numeric(df[c_cant], errors='coerce').fillna(0)
+    # Estandarizar Fechas
+    c_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'MES'])), 'FECHA')
+    df['Fecha_dt'] = pd.to_datetime(df[c_fecha], dayfirst=True, errors='coerce')
+    df['Mes'] = df['Fecha_dt'].dt.strftime('%Y-%m')
+    # Columnas de agrupación (Paso 1 del usuario)
+    df['Emprendimiento'] = df.get('EMPRENDIMIENTO', 'S/E').fillna('S/E').astype(str).str.strip().str.upper()
+    df['Cliente'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.strip().str.upper()
+    return df
+
+# --- 3. PROCESAMIENTO PRINCIPAL ---
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO PRODUCTOS ---
+    # Cargar Maestro
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -51,125 +72,121 @@ if data:
             if col in df_ma.columns:
                 df_ma[col] = df_ma[col].fillna('OTRO').astype(str).str.upper().str.strip()
 
-    # --- 3. LIMPIEZA UNIFICADA ---
-    def clean_df(name):
-        df = data.get(name, pd.DataFrame()).copy()
-        if df.empty: return pd.DataFrame()
-        
-        df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
-        c_cant = next((c for c in df.columns if any(x in c for x in ['UNID', 'CANT'])), 'CANT')
-        df['Cant'] = pd.to_numeric(df[c_cant], errors='coerce').fillna(0)
-        
-        c_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'MES'])), 'FECHA')
-        df['Fecha_dt'] = pd.to_datetime(df[c_fecha], dayfirst=True, errors='coerce')
-        df['Mes'] = df['Fecha_dt'].dt.strftime('%Y-%m')
-        
-        df['Emprendimiento'] = df.get('EMPRENDIMIENTO', 'S/E').fillna('S/E').astype(str).str.strip().str.upper()
-        df['Cliente'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.strip().str.upper()
-        return df
+    # Cargar y limpiar archivos
+    so_raw = clean_df(data.get('Sell_out', pd.DataFrame()), 'Sell_out')
+    si_raw = clean_df(data.get('Sell_in', pd.DataFrame()), 'Sell_in')
+    stk_raw = clean_df(data.get('Stock', pd.DataFrame()), 'Stock')
 
-    so_raw = clean_df('Sell_out')
-    si_raw = clean_df('Sell_in')
-    stk_raw = clean_df('Stock')
-
-    # --- 4. FILTROS SIDEBAR ---
-    st.sidebar.header("🔍 Filtros Globales")
+    # --- 4. SIDEBAR (FILTROS SOLICITADOS) ---
+    st.sidebar.header("🔍 Filtros de Control")
     f_search = st.sidebar.text_input("🎯 SKU / Descripción").upper()
-    
     meses_dis = sorted(list(set(so_raw['Mes'].dropna())), reverse=True) if not so_raw.empty else []
     f_mes = st.sidebar.selectbox("📅 Mes", ["Todos"] + meses_dis)
-    
     f_dis = st.sidebar.multiselect("👟 Disciplina", sorted(df_ma['DISCIPLINA'].unique()))
     f_fra = st.sidebar.multiselect("💰 Franja", sorted(df_ma['FRANJA_PRECIO'].unique()))
     
     st.sidebar.divider()
     
-    # PASO 1: FILTRO EMPRENDIMIENTO (Unión de Sell In y Sell Out)
-    emp_so = set(so_raw['Emprendimiento'].unique()) if not so_raw.empty else set()
-    emp_si = set(si_raw['Emprendimiento'].unique()) if not si_raw.empty else set()
-    lista_emp = sorted(list(emp_so | emp_si))
-    f_emp = st.sidebar.multiselect("🏢 Emprendimiento", lista_emp, default=lista_emp)
+    # PASO 1: FILTRO EMPRENDIMIENTO UNIFICADO
+    lista_emp = sorted(list(set(so_raw['Emprendimiento'].unique()) | set(si_raw['Emprendimiento'].unique())))
+    f_emp = st.sidebar.multiselect("🏢 Emprendimiento", options=lista_emp, default=lista_emp)
 
-    # Filtro de Clientes específico de Sell Out
-    cli_so = sorted(so_raw['Cliente'].unique()) if not so_raw.empty else []
-    f_cli_so = st.sidebar.multiselect("📉 Clientes Sell Out", cli_so, default=cli_so)
+    # Filtro Cliente Sell Out (Columna E)
+    lista_cli = sorted(so_raw['Cliente'].unique()) if not so_raw.empty else []
+    f_cli_so = st.sidebar.multiselect("📉 Clientes Sell Out", options=lista_cli, default=lista_cli)
 
-    def apply_filters(df, type_df=None, filter_month=True):
+    # --- 5. APLICACIÓN DE FILTROS ---
+    def apply_filters(df, is_so=False):
         if df.empty: return df
         temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION']], on='SKU', how='left')
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if f_search: 
             temp = temp[temp['SKU'].str.contains(f_search, na=False) | temp['DESCRIPCION'].str.contains(f_search, na=False)]
-        if filter_month and f_mes != "Todos": temp = temp[temp['Mes'] == f_mes]
+        if f_mes != "Todos": temp = temp[temp['Mes'] == f_mes]
         if f_emp: temp = temp[temp['Emprendimiento'].isin(f_emp)]
-        if type_df == 'SO' and f_cli_so: temp = temp[temp['Cliente'].isin(f_cli_so)]
+        if is_so and f_cli_so: temp = temp[temp['Cliente'].isin(f_cli_so)]
         return temp
 
-    so_f = apply_filters(so_raw, type_df='SO')
+    so_f = apply_filters(so_raw, is_so=True)
     si_f = apply_filters(si_raw)
     stk_f = apply_filters(stk_raw)
 
-    # --- 5. LÓGICA DE SEGMENTACIÓN ---
-    max_date = stk_f['Fecha_dt'].max() if not stk_f.empty else None
-    stk_snap = stk_f[stk_f['Fecha_dt'] == max_date].copy() if max_date else pd.DataFrame()
+    # --- 6. KPIs Y TOTALES ---
+    stk_max = stk_f[stk_f['Fecha_dt'] == stk_f['Fecha_dt'].max()] if not stk_f.empty else pd.DataFrame()
+    
+    def sum_q(df, key):
+        if df.empty: return 0
+        return df[df['Emprendimiento'].str.contains(key, na=False)]['Cant'].sum()
 
-    def get_sector(df, val):
-        if df.empty: return pd.DataFrame()
-        return df[df['Emprendimiento'].str.contains(val, na=False)]
+    st.subheader("📊 Resumen Ejecutivo")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Sell Out Total", f"{so_f['Cant'].sum():,.0f}")
+    c2.metric("Stock Dass", f"{sum_q(stk_max, 'DASS'):,.0f}")
+    c3.metric("Stock Wholesale", f"{sum_q(stk_max, 'WHOLESALE'):,.0f}")
+    c4.metric("Stock Retail", f"{sum_q(stk_max, 'RETAIL'):,.0f}")
+    c5.metric("Stock E-com", f"{sum_q(stk_max, 'E-COM'):,.0f}")
 
-    # --- 6. KPIs ---
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Sell Out Total", f"{so_f['Cant'].sum():,.0f}")
-    k2.metric("Stock Dass", f"{get_sector(stk_snap, 'DASS')['Cant'].sum():,.0f}")
-    k3.metric("Stock Clientes", f"{get_sector(stk_snap, 'WHOLESALE')['Cant'].sum():,.0f}")
-    k4.metric("Stock Retail", f"{get_sector(stk_snap, 'RETAIL')['Cant'].sum():,.0f}")
-    k5.metric("Stock E-com", f"{get_sector(stk_snap, 'E-COM')['Cant'].sum():,.0f}")
-
-    # --- 7. GRÁFICOS DE TORTA ---
-    st.subheader("📌 Análisis por Disciplina")
-    def safe_pie(df, title):
-        if not df.empty and df['Cant'].sum() > 0:
-            return px.pie(df.groupby('DISCIPLINA')['Cant'].sum().reset_index(), values='Cant', names='DISCIPLINA', title=title, color_discrete_map=COLOR_MAP_DIS)
-        return None
-
-    r1 = st.columns(4)
-    plots = [(get_sector(stk_snap, 'DASS'), "Stock Dass"), (get_sector(so_f, 'WHOLESALE'), "Sell Out Wholesale"), (get_sector(so_f, 'RETAIL'), "Sell Out Retail"), (get_sector(so_f, 'E-COM'), "Sell Out E-com")]
-    for i, (d, t) in enumerate(plots):
-        fig = safe_pie(d, t)
-        if fig: r1[i].plotly_chart(fig, use_container_width=True)
-        else: r1[i].info(f"{t}: Sin datos")
-
-    # --- 8. EVOLUCIÓN (PASO 2: Dos líneas) ---
+    # --- 7. GRÁFICOS (COLORES ESTRICTOS) ---
     st.divider()
-    st.subheader("📈 Evolución: Sell Out vs Stock Clientes")
-    h_so = apply_filters(so_raw, type_df='SO', filter_month=False)
-    h_stk = apply_filters(stk_raw, filter_month=False)
-    ev_so = get_sector(h_so, 'WHOLESALE').groupby('Mes')['Cant'].sum().reset_index()
-    ev_stk = get_sector(h_stk, 'WHOLESALE').groupby('Mes')['Cant'].sum().reset_index()
+    def draw_pie(df, title):
+        if df.empty or df['Cant'].sum() == 0: return None
+        data_pie = df.groupby('DISCIPLINA')['Cant'].sum().reset_index()
+        fig = px.pie(data_pie, values='Cant', names='DISCIPLINA', title=title,
+                     color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        return fig
+
+    st.subheader("👟 Distribución por Disciplina")
+    g1, g2, g3, g4 = st.columns(4)
+    with g1:
+        f = draw_pie(stk_max[stk_max['Emprendimiento'].str.contains('DASS')], "Stock Dass")
+        if f: st.plotly_chart(f, use_container_width=True)
+    with g2:
+        f = draw_pie(so_f[so_f['Emprendimiento'].str.contains('WHOLESALE')], "SO Wholesale")
+        if f: st.plotly_chart(f, use_container_width=True)
+    with g3:
+        f = draw_pie(so_f[so_f['Emprendimiento'].str.contains('RETAIL')], "SO Retail")
+        if f: st.plotly_chart(f, use_container_width=True)
+    with g4:
+        f = draw_pie(so_f[so_f['Emprendimiento'].str.contains('E-COM')], "SO E-com")
+        if f: st.plotly_chart(f, use_container_width=True)
+
+    # --- 8. LÍNEA DE TIEMPO (2 LÍNEAS) ---
+    st.subheader("📈 Evolución: Sell Out vs Stock (Wholesale/Retail/Ecom)")
+    # Re-filtrar sin el mes actual para ver la historia
+    h_so = apply_filters(so_raw, is_so=True).groupby('Mes')['Cant'].sum().reset_index()
+    h_stk = apply_filters(stk_raw).groupby('Mes')['Cant'].sum().reset_index()
+    
     fig_ev = go.Figure()
-    fig_ev.add_trace(go.Scatter(x=ev_so['Mes'], y=ev_so['Cant'], name='SELL OUT', line=dict(color='#FF3131', width=3)))
-    fig_ev.add_trace(go.Scatter(x=ev_stk['Mes'], y=ev_stk['Cant'], name='STOCK', line=dict(color='#0055A4', width=3, dash='dot')))
+    fig_ev.add_trace(go.Scatter(x=h_so['Mes'], y=h_so['Cant'], name='SELL OUT', line=dict(color='#FF3131', width=3)))
+    fig_ev.add_trace(go.Scatter(x=h_stk['Mes'], y=h_stk['Cant'], name='STOCK', line=dict(color='#0055A4', width=3, dash='dot')))
     st.plotly_chart(fig_ev, use_container_width=True)
 
-    # --- 9. TABLA DE DETALLE (PASO 2: Estructura solicitada) ---
+    # --- 9. TABLA DE DETALLE (TODOS LOS CAMPOS) ---
+    st.divider()
     st.subheader("📋 Tabla de Información Detallada")
-    # Consolidación por SKU
+    
+    # Cálculos por SKU
     t_so = so_f.groupby('SKU')['Cant'].sum().reset_index(name='Sell out Total')
-    m3 = meses_dis[:3]
-    t_m3 = so_raw[so_raw['Mes'].isin(m3)].groupby(['Mes', 'SKU'])['Cant'].sum().reset_index()
+    t_m3 = so_raw[so_raw['Mes'].isin(meses_dis[:3])].groupby(['Mes', 'SKU'])['Cant'].sum().reset_index()
     t_max = t_m3.groupby('SKU')['Cant'].max().reset_index(name='Max_Mensual_3M')
-    t_stk_c = stk_snap[~stk_snap['Emprendimiento'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index(name='Stock Clientes')
-    t_stk_d = get_sector(stk_snap, 'DASS').groupby('SKU')['Cant'].sum().reset_index(name='Stock Dass')
+    t_stk_c = stk_max[~stk_max['Emprendimiento'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index(name='Stock Clientes')
+    t_stk_d = stk_max[stk_max['Emprendimiento'].str.contains('DASS')].groupby('SKU')['Cant'].sum().reset_index(name='Stock Dass')
     t_si = si_f.groupby('SKU')['Cant'].sum().reset_index(name='Sell In Total')
     
-    df_f = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].copy()
-    for t in [t_so, t_max, t_stk_c, t_stk_d, t_si]:
-        df_f = df_f.merge(t, on='SKU', how='left')
+    # Merge Final
+    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left')
+    for t in [t_max, t_stk_c, t_stk_d, t_si]:
+        df_final = df_final.merge(t, on='SKU', how='left')
     
-    df_f = df_f.fillna(0)
-    df_f['MOS'] = (df_f['Stock Clientes'] / df_f['Max_Mensual_3M']).replace([float('inf')], 0).fillna(0).round(1)
+    df_final = df_final.fillna(0)
+    # Cálculo MOS
+    df_final['MOS'] = (df_final['Stock Clientes'] / df_final['Max_Mensual_3M']).replace([float('inf')], 0).fillna(0).round(1)
     
-    # Filtro para no mostrar filas vacías
-    df_f = df_f[(df_f['Sell out Total']>0) | (df_f['Stock Clientes']>0) | (df_f['Stock Dass']>0)]
-    st.dataframe(df_f[['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO','Sell out Total','Max_Mensual_3M','Stock Clientes','MOS','Stock Dass','Sell In Total']], use_container_width=True)
+    # Columnas finales solicitadas
+    cols = ['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO','Sell out Total','Max_Mensual_3M','Stock Clientes','MOS','Stock Dass','Sell In Total']
+    st.dataframe(df_final[cols].sort_values('Sell out Total', ascending=False), use_container_width=True)
+
+else:
+    st.warning("No se encontraron archivos CSV en la carpeta configurada.")
