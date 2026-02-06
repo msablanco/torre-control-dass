@@ -7,20 +7,21 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v6.9", layout="wide")
+st.set_page_config(page_title="Dass Performance v7.0", layout="wide")
 
-# --- DICCIONARIO DE COLORES FIJOS ---
-# Esto asegura que la identidad visual sea coherente en todo el dashboard
+# --- MAPA DE COLORES FIJOS POR DISCIPLINA ---
 COLOR_MAP = {
-    'SPORTSWEAR': '#0055A4', # Azul oscuro
-    'RUNNING': '#87CEEB',    # Celeste
-    'TRAINING': '#FF3131',   # Rojo
-    'HERITAGE': '#00A693',   # Verde azulado
-    'KIDS': '#FFB6C1',       # Rosa
-    'TENNIS': '#FFD700',     # Dorado/Amarillo
-    'SANDALS': '#90EE90',    # Verde claro
-    'OUTDOOR': '#8B4513',    # Marrón
-    'TENIS': '#FFD700'       # Mismo que Tennis
+    'SPORTSWEAR': '#0055A4', 
+    'RUNNING': '#87CEEB',    
+    'TRAINING': '#FF3131',   
+    'HERITAGE': '#00A693',   
+    'KIDS': '#FFB6C1',       
+    'TENNIS': '#FFD700',     
+    'TENIS': '#FFD700',
+    'SANDALS': '#90EE90',    
+    'OUTDOOR': '#8B4513',
+    'FOOTBALL': '#000000',
+    'FUTBOL': '#000000'
 }
 
 @st.cache_data(ttl=600)
@@ -50,10 +51,23 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO ---
+    # --- 1. PROCESAMIENTO MAESTRO (Validación Robusta) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    df_ma['FRANJA_PRECIO'] = df_ma.get('FRANJA_PRECIO', 'SIN CATEGORIA').fillna('SIN CATEGORIA').astype(str).str.upper()
-    df_ma['Disciplina'] = df_ma.get('Disciplina', 'OTRO').fillna('OTRO').astype(str).str.upper()
+    
+    # Validación de FRANJA_PRECIO
+    if 'FRANJA_PRECIO' not in df_ma.columns:
+        df_ma['FRANJA_PRECIO'] = 'SIN CATEGORIA'
+    else:
+        df_ma['FRANJA_PRECIO'] = df_ma['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
+    
+    # Validación de Disciplina
+    if 'Disciplina' not in df_ma.columns:
+        df_ma['Disciplina'] = 'OTRO'
+    else:
+        df_ma['Disciplina'] = df_ma['Disciplina'].fillna('OTRO')
+
+    df_ma['FRANJA_PRECIO'] = df_ma['FRANJA_PRECIO'].astype(str).str.upper()
+    df_ma['Disciplina'] = df_ma['Disciplina'].astype(str).str.upper()
 
     # --- 2. STOCK (Lógica Cliente DASS) ---
     stk_raw = data.get('Stock', pd.DataFrame())
@@ -64,15 +78,16 @@ if data:
         stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
         stk_raw['Cliente_stk'] = stk_raw['Cliente'].fillna('').astype(str).str.upper().str.strip()
         mask_dass = stk_raw['Cliente_stk'].str.contains('DASS', na=False)
+        
         st_dass_grp = stk_raw[mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
         st_cli_grp = stk_raw[~mask_dass].groupby(['SKU', 'Cliente'])['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
 
     # --- 3. VENTAS ---
     si_raw = data.get('Sell_in', pd.DataFrame())
-    si_grp = si_raw.copy()
-    if not si_grp.empty:
-        si_grp['Sell in'] = pd.to_numeric(si_grp['Unidades'], errors='coerce').fillna(0)
-        si_grp = si_grp.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
+    si_grp = pd.DataFrame(columns=['SKU', 'Sell in', 'Cliente'])
+    if not si_raw.empty:
+        si_raw['Sell in'] = pd.to_numeric(si_raw['Unidades'], errors='coerce').fillna(0)
+        si_grp = si_raw.groupby(['SKU', 'Cliente'])['Sell in'].sum().reset_index()
 
     so_raw = data.get('Sell_out', pd.DataFrame())
     so_final = pd.DataFrame(columns=['SKU', 'Sell out Clientes', 'Cliente'])
@@ -81,9 +96,9 @@ if data:
         so_final = so_raw.groupby(['SKU', 'Cliente'])['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell out Clientes'})
 
     # --- 4. FILTROS ---
-    st.sidebar.header("🔍 Filtros Dinámicos")
+    st.sidebar.header("🔍 Filtros de Gestión")
     clis_all = sorted(list(set(si_grp['Cliente'].dropna().unique().tolist() + st_cli_grp['Cliente'].dropna().unique().tolist())))
-    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['DASS', '0']])
+    f_cli = st.sidebar.multiselect("Cliente", [c for c in clis_all if str(c) not in ['DASS', '0', 'nan']])
     f_dis = st.sidebar.multiselect("Disciplina", sorted(df_ma['Disciplina'].unique()))
     f_fra = st.sidebar.multiselect("Franja", sorted(df_ma['FRANJA_PRECIO'].unique()))
 
@@ -100,31 +115,29 @@ if data:
     if f_fra: df = df[df['FRANJA_PRECIO'].isin(f_fra)]
 
     # --- 5. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v6.9")
+    st.title("📊 Torre de Control Dass v7.0")
 
-    # Función Segura con Colores Coherentes
-    def safe_pie_colored(dataframe, val_col, name_col, title_str, col_target):
+    def safe_pie_colored(dataframe, val_col, name_col, title_str, col_target, use_map=False):
         clean_df = dataframe[dataframe[val_col] > 0]
         if not clean_df.empty:
-            # Agregamos color_discrete_map para forzar la coherencia
-            fig = px.pie(clean_df, values=val_col, names=name_col, 
-                         title=title_str, 
-                         color=name_col,
-                         color_discrete_map=COLOR_MAP)
-            fig.update_traces(textinfo='percent')
+            if use_map:
+                fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str, 
+                             color=name_col, color_discrete_map=COLOR_MAP)
+            else:
+                fig = px.pie(clean_df, values=val_col, names=name_col, title=title_str)
+            fig.update_traces(textinfo='percent+label')
             col_target.plotly_chart(fig, use_container_width=True)
         else:
             col_target.warning(f"Sin datos: {title_str}")
 
-    st.subheader("📌 Participación por Disciplina (Colores Unificados)")
+    st.subheader("📌 Participación por Disciplina (Colores Fijos)")
     g1, g2, g3 = st.columns(3)
-    safe_pie_colored(df, 'Stock Dass', 'Disciplina', "Stock Dass (Foto)", g1)
-    safe_pie_colored(df, 'Sell in', 'Disciplina', "Ingresos (Flujo)", g2)
-    safe_pie_colored(df, 'Sell out Clientes', 'Disciplina', "Sell Out (Flujo)", g3)
+    safe_pie_colored(df, 'Stock Dass', 'Disciplina', "Stock Dass (Foto)", g1, use_map=True)
+    safe_pie_colored(df, 'Sell in', 'Disciplina', "Ingresos (Sell In)", g2, use_map=True)
+    safe_pie_colored(df, 'Sell out Clientes', 'Disciplina', "Sell Out Clientes", g3, use_map=True)
 
     st.subheader("🏆 Participación por Franja")
     p1, p2, p3 = st.columns(3)
-    # Para franjas dejamos el color automático o podrías definir otro mapa si quisieras
     safe_pie_colored(df, 'Stock Dass', 'FRANJA_PRECIO', "Stock Dass / Franja", p1)
     safe_pie_colored(df, 'Sell in', 'FRANJA_PRECIO', "Ingresos / Franja", p2)
     safe_pie_colored(df, 'Sell out Clientes', 'FRANJA_PRECIO', "Sell Out / Franja", p3)
@@ -135,4 +148,4 @@ if data:
     st.dataframe(df[['SKU', 'Descripcion', 'Disciplina', 'FRANJA_PRECIO', 'Sell in', 'Sell out Clientes', 'Stock Dass', 'Stock Clientes', 'WOS']].sort_values('Sell out Clientes', ascending=False), use_container_width=True)
 
 else:
-    st.info("Cargando datos...")
+    st.info("Conectando con Drive...")
