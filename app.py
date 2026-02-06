@@ -8,8 +8,30 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
+st.set_page_config(
+    page_title="Performance & Inteligencia: Fila Calzado",
+    page_icon="logo_fila.png", # <--- Esto pone el logo en la pestaña del navegador
+    layout="wide"
+)
+if data:
+    # --- BARRA LATERAL CON LOGO ---
+    try:
+        st.sidebar.image("logo_fila.png", use_container_width=True)
+    except:
+        st.sidebar.warning("Logo no encontrado. Subí 'logo_fila.png' a GitHub.")
 
+    st.sidebar.header("🔍 Inteligencia de Datos")
+    # ... (Tus filtros de siempre)
+
+    # --- TÍTULO PRINCIPAL CON LOGO AL LADO ---
+    col_l, col_t = st.columns([1, 5])
+    with col_l:
+        try:
+            st.image("logo_fila.png", width=120)
+        except:
+            pass
+    with col_t:
+        st.title("Performance & Inteligencia: Fila Calzado")
 # --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
@@ -122,7 +144,7 @@ if data:
     si_f = apply_filters(si_raw)
 
     # --- 6. MÉTRICAS ---
-    st.title("📊 Turevientan")
+    st.title("📊 Performance & Inteligencia: Fila Calzado")
     
     # Stock Dass (Última fecha de DASS)
     df_dass = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]
@@ -199,3 +221,4 @@ if data:
 
 else:
     st.error("No se detectaron archivos en Drive.")
+
