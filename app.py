@@ -50,10 +50,22 @@ def load_all_data():
 
 data = load_all_data()
 
-# --- 2. INTERFAZ ---
-try: st.sidebar.image("logo_fila.png", use_container_width=True)
-except: pass
+# --- 2. ENCABEZADO (LOGO Y TÍTULO RE-INSTALADOS) ---
+try: 
+    st.sidebar.image("logo_fila.png", use_container_width=True)
+except: 
+    pass
+
 st.sidebar.header("🔍 Filtros de Inteligencia")
+
+# Bloque del Título Principal
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    try: st.image("logo_fila.png", width=120)
+    except: pass
+with col_title:
+    st.title("Performance & Inteligencia: Fila Calzado")
+    st.markdown("### Torre de Control de Inventario y Ventas")
 
 if data:
     # --- 3. MAESTRO DE PRODUCTOS ---
@@ -65,7 +77,6 @@ if data:
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION'].fillna('').str.upper()
     else:
-        # Si no hay maestro, creamos uno vacío con columnas para evitar KeyErrors
         df_ma = pd.DataFrame(columns=['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA'])
 
     # --- 4. FUNCIONES DE PROCESAMIENTO ---
@@ -96,7 +107,7 @@ if data:
     so_raw = process_sales('Sell_out', 2)
     stk_raw = process_stock()
 
-    # --- 5. SIDEBAR FILTROS ---
+    # --- 5. FILTROS ---
     search_sku = st.sidebar.text_input("🎯 Buscar SKU / Modelo").upper()
     canales_op = ["WHOLESALE", "E-COM", "RETAIL"]
     f_emp = st.sidebar.multiselect("🚀 Emprendimiento (Canal)", canales_op, default=canales_op)
@@ -110,27 +121,16 @@ if data:
     fra_op = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique()])
     f_fra = st.sidebar.multiselect("💰 Franjas de Precio", fra_op)
 
-    # --- 6. LÓGICA DE FILTRADO ROBUSTA ---
     def apply_filters(df, is_stock=False):
-        if df.empty: 
-            # Retornar estructura mínima para evitar KeyErrors en los gráficos
-            return pd.DataFrame(columns=['SKU', 'CANT', 'EMPRENDIMIENTO', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA', 'MES'])
-        
+        if df.empty: return pd.DataFrame(columns=['SKU', 'CANT', 'EMPRENDIMIENTO', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA', 'MES'])
         temp = df.copy()
-        
-        # Filtro de Emprendimiento (Dinámico para Stock Cliente y Ventas)
         if f_emp:
             pattern = '|'.join(f_emp)
             temp = temp[temp['EMPRENDIMIENTO'].str.contains(pattern, na=False)]
-            
         if not is_stock and f_mes != "Todos":
             temp = temp[temp['MES'] == f_mes]
-            
-        # Merge con Maestro para asegurar columnas de categoría
         temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
-        temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
-        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
-
+        temp[['DISCIPLINA', 'FRANJA_PRECIO']] = temp[['DISCIPLINA', 'FRANJA_PRECIO']].fillna('SIN CATEGORIA')
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if search_sku: temp = temp[temp['BUSQUEDA'].str.contains(search_sku, na=False)]
@@ -140,14 +140,12 @@ if data:
     si_f = apply_filters(si_raw)
     stk_f = apply_filters(stk_raw, is_stock=True)
 
-    # --- 7. KPIs ---
-    # Stock Dass (Basado en el raw para que no lo afecte el filtro de emprendimiento)
+    # --- 6. KPIs ---
     dass_raw = stk_raw[stk_raw['EMPRENDIMIENTO'].str.contains('DASS', na=False)]
     snap_dass = dass_raw[dass_raw['FECHA_DT'] == dass_raw['FECHA_DT'].max()] if not dass_raw.empty else pd.DataFrame()
     if not snap_dass.empty:
         snap_dass = snap_dass.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO']], on='SKU', how='left').fillna('SIN CATEGORIA')
 
-    # Stock Cliente (Filtrado por emprendimiento)
     df_cli = stk_f[~stk_f['EMPRENDIMIENTO'].str.contains('DASS', na=False)]
     snap_wh = df_cli[df_cli['FECHA_DT'] == df_cli['FECHA_DT'].max()] if not df_cli.empty else pd.DataFrame()
 
@@ -157,36 +155,44 @@ if data:
     k3.metric("🏢 Stock Dass", f"{snap_dass['CANT'].sum():,.0f}" if not snap_dass.empty else "0")
     k4.metric("🤝 Stock Cliente Filtrado", f"{snap_wh['CANT'].sum():,.0f}" if not snap_wh.empty else "0")
 
-    # --- 8. GRÁFICOS (PROTEGIDOS CONTRA DFS VACÍOS) ---
+    # --- 7. GRÁFICOS: DISTRIBUCIÓN ---
     st.divider()
     st.subheader("📊 Análisis por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    
     with c1:
-        if not snap_dass.empty:
-            st.plotly_chart(px.pie(snap_dass.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not snap_dass.empty: st.plotly_chart(px.pie(snap_dass.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c2:
-        if not so_f.empty:
-            st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not so_f.empty: st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c3:
-        if not snap_wh.empty:
-            st.plotly_chart(px.pie(snap_wh.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not snap_wh.empty: st.plotly_chart(px.pie(snap_wh.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c4:
-        if not si_f.empty:
-            st.plotly_chart(px.bar(si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Mes", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        if not si_f.empty: st.plotly_chart(px.bar(si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Mes", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
-    # --- 9. ANÁLISIS POR CANAL Y FRANJA ---
+    # --- 8. ANÁLISIS POR CANAL Y FRANJA ---
     st.divider()
+    st.subheader("💰 Segmentación por Franja y Canal")
     f1, f2, f3 = st.columns(3)
     with f1:
-        if not so_f.empty:
-            st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Ventas por Franja", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+        if not so_f.empty: st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Ventas por Franja", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     with f2:
-        if not so_f.empty:
-            st.plotly_chart(px.bar(so_f.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Sell Out por Canal", color_discrete_sequence=['#0055A4']), use_container_width=True)
+        if not so_f.empty: st.plotly_chart(px.bar(so_f.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Sell Out por Canal", color_discrete_sequence=['#0055A4']), use_container_width=True)
     with f3:
-        if not snap_wh.empty:
-            st.plotly_chart(px.bar(snap_wh.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Stock Cliente por Canal", color_discrete_sequence=['#FFD700']), use_container_width=True)
+        if not snap_wh.empty: st.plotly_chart(px.bar(snap_wh.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Stock Cliente por Canal", color_discrete_sequence=['#FFD700']), use_container_width=True)
+
+    # --- 9. EVOLUCIÓN TEMPORAL ---
+    st.divider()
+    st.subheader("📈 Evolución Temporal del Negocio")
+    h_so = so_f.groupby('MES')['CANT'].sum().reset_index(name='SO')
+    h_si = si_f.groupby('MES')['CANT'].sum().reset_index(name='SI')
+    h_sd = stk_raw[stk_raw['EMPRENDIMIENTO'].str.contains('DASS')].groupby('MES')['CANT'].sum().reset_index(name='SD')
+    h_sc = stk_f[~stk_f['EMPRENDIMIENTO'].str.contains('DASS')].groupby('MES')['CANT'].sum().reset_index(name='SC')
+    df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
+    fig_h = go.Figure()
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SO'], name='Sell Out', line=dict(color='#0055A4', width=3)))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SI'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SD'], name='Stock Dass', line=dict(color='#00A693')))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SC'], name='Stock Cliente', line=dict(color='#FFD700')))
+    st.plotly_chart(fig_h, use_container_width=True)
 
     # --- 10. MATRIZ SKU ---
     st.divider()
@@ -197,9 +203,8 @@ if data:
     t_sc = snap_wh.groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente') if not snap_wh.empty else pd.DataFrame(columns=['SKU', 'Stock Cliente'])
     
     df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='outer').merge(t_si, on='SKU', how='left').merge(t_sd, on='SKU', how='left').merge(t_sc, on='SKU', how='left').fillna(0)
-    
     mask = (df_final['Sell Out'] > 0) | (df_final['Sell In'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Stock Cliente'] > 0)
     st.dataframe(df_final[mask].sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.error("Error crítico: No se pudieron cargar los archivos desde Google Drive.")
+    st.error("Error al cargar datos desde Drive.")
