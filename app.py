@@ -63,8 +63,7 @@ with col_t:
     st.title("Performance & Inteligencia: Fila Calzado")
 
 if data:
-    # --- 3. PROCESAMIENTO DE DATOS ---
-    # Maestro
+    # --- 3. PROCESAMIENTO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -73,7 +72,6 @@ if data:
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION'].fillna('').str.upper()
 
-    # Función Limpieza Ventas
     def clean_v(name, c_idx, e_idx):
         df = data.get(name, pd.DataFrame()).copy()
         if df.empty: return pd.DataFrame()
@@ -86,10 +84,9 @@ if data:
         res['MES'] = res['FECHA_DT'].dt.strftime('%Y-%m')
         return res
 
-    si_raw = clean_v('Sell_in', 3, 4)  # Col D=3, E=4
-    so_raw = clean_v('Sell_out', 2, 4) # Col C=2, E=4
+    si_raw = clean_v('Sell_in', 3, 4) 
+    so_raw = clean_v('Sell_out', 2, 4) 
 
-    # Función Limpieza Stock
     def clean_s():
         df = data.get('Stock', pd.DataFrame()).copy()
         if df.empty: return pd.DataFrame()
@@ -113,21 +110,17 @@ if data:
     f_fra = st.sidebar.multiselect("💰 Franjas de Precio", fra_op)
     search_sku = st.sidebar.text_input("🎯 Buscar SKU / Modelo").upper()
 
-    # --- 5. APLICACIÓN DE FILTROS ---
     def apply_f(df, is_stk=False):
         if df.empty: return df
         temp = df.copy()
-        # Filtros de Transacción
         if not is_stk:
             if f_emp: temp = temp[temp['EMPRENDIMIENTO'].isin(f_emp)]
             if f_mes != "Todos": temp = temp[temp['MES'] == f_mes]
         
-        # Unión con Maestro (Left join para no perder datos)
         temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
         temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
         temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
 
-        # Filtros de Maestro
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if search_sku: temp = temp[temp['BUSQUEDA'].str.contains(search_sku, na=False)]
@@ -137,11 +130,9 @@ if data:
     so_f = apply_f(so_raw)
     stk_f = apply_f(stk_raw, is_stk=True)
 
-    # --- 6. KPIs ---
-    # Stock foto actual
+    # --- 5. KPIs ---
     dass_f = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]
     snap_d = dass_f[dass_f['FECHA_DT'] == dass_f['FECHA_DT'].max()] if not dass_f.empty else pd.DataFrame()
-    
     wh_f = stk_f[stk_f['CLIENTE_UP'].str.contains('WHOLESALE', na=False)]
     snap_w = wh_f[wh_f['FECHA_DT'] == wh_f['FECHA_DT'].max()] if not wh_f.empty else pd.DataFrame()
 
@@ -151,26 +142,39 @@ if data:
     k3.metric("🏢 Stock Dass", f"{snap_d['CANT'].sum():,.0f}")
     k4.metric("🤝 Stock Cliente", f"{snap_w['CANT'].sum():,.0f}")
 
-    # --- 7. GRÁFICOS: TORTAS ---
+    # --- 6. ANÁLISIS POR DISCIPLINA ( TORTAS + BARRAS ) ---
     st.divider()
-    st.subheader("📊 Distribución por Disciplina y Franja")
-    g1, g2, g3 = st.columns(3)
-    with g1:
+    st.subheader("📊 Performance por Disciplina")
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+    with col1:
         st.plotly_chart(px.pie(snap_d.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with g2:
+    with col2:
         st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with g3:
-        st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out por Franja", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with col3:
+        st.plotly_chart(px.pie(snap_w.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+    with col4:
+        st.plotly_chart(px.bar(si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='DISCIPLINA', title="Evolución Sell In", color_discrete_map=COLOR_MAP_DIS, text_auto='.2s'), use_container_width=True)
 
-    # --- 8. GRÁFICO: LÍNEA DE TIEMPO ---
+    # --- 7. ANÁLISIS POR FRANJA ---
+    st.subheader("💰 Segmentación por Franja de Precio")
+    fcol1, fcol2, fcol3, fcol4 = st.columns([1, 1, 1, 2])
+    with fcol1:
+        st.plotly_chart(px.pie(snap_d.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with fcol2:
+        st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with fcol3:
+        st.plotly_chart(px.pie(snap_w.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with fcol4:
+        st.plotly_chart(px.bar(so_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Venta por Franja", color_discrete_map=COLOR_MAP_FRA, text_auto='.2s'), use_container_width=True)
+
+    # --- 8. HISTÓRICO ---
     st.divider()
-    st.subheader("📈 Evolución Temporal")
+    st.subheader("📈 Evolución Temporal del Negocio")
     h_so = so_f.groupby('MES')['CANT'].sum().reset_index(name='SO')
     h_si = si_f.groupby('MES')['CANT'].sum().reset_index(name='SI')
     h_stk = stk_f.groupby(['MES', 'CLIENTE_UP'])['CANT'].sum().reset_index()
     h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS')].groupby('MES')['CANT'].sum().reset_index(name='SD')
     h_sc = h_stk[h_stk['CLIENTE_UP'].str.contains('WHOLESALE')].groupby('MES')['CANT'].sum().reset_index(name='SC')
-    
     df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
     
     fig_h = go.Figure()
@@ -180,7 +184,7 @@ if data:
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SC'], name='Stock Cliente', line=dict(color='#FFD700')))
     st.plotly_chart(fig_h, use_container_width=True)
 
-    # --- 9. TABLA DE DATOS ---
+    # --- 9. MATRIZ DE INTELIGENCIA SKU ---
     st.divider()
     st.subheader("📋 Matriz de Inteligencia por SKU")
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
@@ -188,10 +192,13 @@ if data:
     t_sd = snap_d.groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
     t_sc = snap_w.groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
     
-    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_si, on='SKU', how='left').merge(t_sd, on='SKU', how='left').merge(t_sc, on='SKU', how='left').fillna(0)
+    # Cruce definitivo con Maestro
+    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='outer').merge(t_si, on='SKU', how='outer').merge(t_sd, on='SKU', how='outer').merge(t_sc, on='SKU', how='outer').fillna(0)
     
+    # Limpiamos ceros innecesarios para que la tabla sea legible
     mask = (df_final['Sell Out'] > 0) | (df_final['Sell In'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Stock Cliente'] > 0)
     st.dataframe(df_final[mask].sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.error("Error: No se pudo conectar con Google Drive o los archivos CSV no están presentes.")
+    st.error("Error al cargar los datos.")
+    
