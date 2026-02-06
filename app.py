@@ -51,10 +51,8 @@ def load_all_data():
 data = load_all_data()
 
 # --- 2. ENCABEZADO Y SIDEBAR ---
-try: 
-    st.sidebar.image("logo_fila.png", use_container_width=True)
-except: 
-    pass
+try: st.sidebar.image("logo_fila.png", use_container_width=True)
+except: pass
 
 st.sidebar.header("🔍 Filtros de Inteligencia")
 
@@ -64,7 +62,7 @@ with col_logo:
     except: pass
 with col_title:
     st.title("Performance & Inteligencia: Fila Calzado")
-    st.markdown("")
+    st.markdown("### Torre de Control de Inventario y Ventas")
 
 if data:
     # --- 3. PROCESAMIENTO DE DATOS ---
@@ -160,7 +158,9 @@ if data:
     with c1:
         if not snap_dass.empty: st.plotly_chart(px.pie(snap_dass.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c2:
-        if not so_f.empty: st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        # Mantenemos el gráfico aunque el filtro lo vacíe
+        df_so_pie = so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index()
+        if not df_so_pie.empty: st.plotly_chart(px.pie(df_so_pie, values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c3:
         if not snap_wh.empty: st.plotly_chart(px.pie(snap_wh.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
     with c4:
@@ -174,13 +174,15 @@ if data:
     st.subheader("💰 Segmentación por Franja y Canal")
     f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
     with f1:
-        if not so_f.empty: st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Venta (Franja)", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+        df_so_fra = so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index()
+        if not df_so_fra.empty: st.plotly_chart(px.pie(df_so_fra, values='CANT', names='FRANJA_PRECIO', title="Venta (Franja)", color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     with f2:
-        if not so_f.empty: st.plotly_chart(px.bar(so_f.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Venta por Canal", color_discrete_sequence=['#0055A4'], text='CANT'), use_container_width=True)
+        df_so_emp = so_f.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index()
+        if not df_so_emp.empty: st.plotly_chart(px.bar(df_so_emp, x='EMPRENDIMIENTO', y='CANT', title="Venta por Canal", color_discrete_sequence=['#0055A4'], text='CANT'), use_container_width=True)
     with f3:
         if not snap_wh.empty: st.plotly_chart(px.bar(snap_wh.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Stock por Canal", color_discrete_sequence=['#FFD700'], text='CANT'), use_container_width=True)
     with f4:
-        if not so_f.empty:
+        if not si_f.empty:
             fig_si_fra = px.bar(si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja", color_discrete_map=COLOR_MAP_FRA, text='CANT')
             fig_si_fra.update_traces(texttemplate='%{text:.2s}', textposition='outside')
             st.plotly_chart(fig_si_fra, use_container_width=True)
@@ -213,5 +215,4 @@ if data:
     st.dataframe(df_final[mask].sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.error("Error al conectar con Google Drive. Revisa st.secrets.")
-
+    st.error("Error al conectar con Drive. Revisa st.secrets.")
