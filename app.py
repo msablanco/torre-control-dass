@@ -7,7 +7,7 @@ import io
 import plotly.graph_objects as go
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v11.8", layout="wide")
+st.set_page_config(page_title="Dass Performance v11.9", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL ---
 COLOR_MAP_DIS = {
@@ -42,12 +42,13 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO ---
+    # --- 2. MAESTRO (PROCESAMIENTO SEGURO) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        for col, default in {'Disciplina': 'OTRO', 'FRANJA_PRECIO': 'SIN CAT', 'Descripcion': 'SIN DESCRIPCION'}.items():
+        columnas_esperadas = {'Disciplina': 'OTRO', 'FRANJA_PRECIO': 'SIN CAT', 'Descripcion': 'SIN DESCRIPCION'}
+        for col, default in columnas_esperadas.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['Busqueda'] = df_ma['SKU'] + " " + df_ma['Descripcion']
@@ -67,17 +68,14 @@ if data:
 
     so_all, si_all, stk_all = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
-    # --- 4. SIDEBAR (FILTROS CON "X") ---
-    st.sidebar.header("🔍 Centro de Filtros")
-    # El text_input de Streamlit permite borrar fácilmente.
-    search_query = st.sidebar.text_input("🎯 Buscar SKU o Descripción", placeholder="Escribí y presioná Enter...").upper()
-    
+    # --- 4. SIDEBAR & FILTROS ---
+    st.sidebar.header("🔍 Filtros")
+    search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + sorted(list(set(so_all['Mes'].dropna())), reverse=True))
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['Disciplina'].unique()))
     f_cli_so = st.sidebar.multiselect("👤 Cliente Sell Out (Venta)", sorted(so_all['Cliente_up'].unique()))
     f_cli_si = st.sidebar.multiselect("📦 Cliente Sell In (Factura)", sorted(si_all['Cliente_up'].unique()))
 
-    # Aplicación de Lógica de Filtrado
     m_filt = df_ma.copy()
     if f_dis: m_filt = m_filt[m_filt['Disciplina'].isin(f_dis)]
     if search_query: m_filt = m_filt[m_filt['Busqueda'].str.contains(search_query, na=False)]
@@ -91,13 +89,17 @@ if data:
         if mode == 'SI' and f_cli_si: temp = temp[temp['Cliente_up'].isin(f_cli_si)]
         return temp.merge(df_ma[['SKU', 'Disciplina', 'FRANJA_PRECIO', 'Descripcion']], on='SKU', how='left')
 
-    so_f = apply_final_filters(so_all, 'SO')
-    si_f = apply_final_filters(si_all, 'SI')
-    stk_f = apply_final_filters(stk_all)
+    so_f, si_f, stk_f = apply_final_filters(so_all, 'SO'), apply_final_filters(si_all, 'SI'), apply_final_filters(stk_all)
 
     # --- 5. DASHBOARD ---
-    st.title("📊 Torre de Control Dass v11.8")
+    st.title("📊 Torre de Control Dass v11.9")
     
+    with st.expander("💡 Tips de Análisis de Performance"):
+        st.markdown("""
+        * **Rotación en Góndola:** Si el **Stock Cliente** (Amarillo) sube y el **Sell Out** (Azul) baja, el producto no está rotando.
+        * **Flujo de Facturación:** Si el **Sell In** (Rojo) tiene picos pero el **Stock Dass** (Verde) no sube, la mercadería fluye rápido.
+        """)
+
     max_date = stk_f['Fecha_dt'].max() if not stk_f.empty else None
     stk_snap = stk_f[stk_f['Fecha_dt'] == max_date] if max_date else pd.DataFrame()
 
@@ -107,8 +109,8 @@ if data:
     k3.metric("Stock Dass", f"{stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
     k4.metric("Stock Cliente", f"{stk_snap[~stk_snap['Cliente_up'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
 
-    # --- 6. GRÁFICOS ---
-    st.subheader("📌 Distribución Estratégica")
+    # --- 6. ANÁLISIS POR DISCIPLINA ---
+    st.subheader("📌 Distribución por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     if not stk_snap.empty:
         c1.plotly_chart(px.pie(stk_snap[stk_snap['Cliente_up'].str.contains('DASS', na=False)].groupby('Disciplina')['Cant'].sum().reset_index(), values='Cant', names='Disciplina', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
@@ -120,7 +122,7 @@ if data:
 
     # --- 7. LÍNEA DE TIEMPO 4D ---
     st.divider()
-    st.subheader("📈 Evolución Histórica")
+    st.subheader("📈 Evolución Histórica: Ventas, Facturación y Stocks")
     
     so_h = apply_final_filters(so_all, 'SO', False).groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell Out'})
     si_h = apply_final_filters(si_all, 'SI', False).groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Sell In'})
@@ -129,7 +131,6 @@ if data:
     sc_h = stk_h_raw[~stk_h_raw['Cliente_up'].str.contains('DASS', na=False)].groupby('Mes')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Cliente'})
 
     df_h = so_h.merge(si_h, on='Mes', how='outer').merge(sd_h, on='Mes', how='outer').merge(sc_h, on='Mes', how='outer').fillna(0).sort_values('Mes')
-
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
     fig.add_trace(go.Scatter(x=df_h['Mes'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
@@ -138,29 +139,18 @@ if data:
     fig.update_layout(height=450, template="plotly_white", hovermode="x unified", legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center"))
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 8. TABLA MEJORADA (ESTILO BUSINESS INTELLIGENCE) ---
+    # --- 8. TABLA MEJORADA (ESTILO DINÁMICO) ---
     st.divider()
-    st.subheader("📋 Detalle de Performance por Producto")
+    st.subheader("📋 Detalle de Productos (Sell Out)")
+    df_tabla = so_f.groupby(['SKU', 'Descripcion', 'Disciplina']).agg({'Cant': 'sum'}).reset_index().sort_values('Cant', ascending=False)
     
-    # Preparar datos de la tabla
-    df_tabla = so_f.groupby(['SKU', 'Descripcion', 'Disciplina']).agg({'Cant': 'sum'}).reset_index()
-    df_tabla = df_tabla.sort_values('Cant', ascending=False)
-    
-    # Configuración visual de la tabla
     st.dataframe(
         df_tabla,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "SKU": st.column_config.TextColumn("Código SKU", help="Identificador único del producto"),
-            "Descripcion": st.column_config.TextColumn("Descripción del Producto", width="large"),
-            "Disciplina": st.column_config.TextColumn("Categoría"),
-            "Cant": st.column_config.ProgressColumn(
-                "Unidades Sell Out",
-                help="Total vendido en el periodo seleccionado",
-                format="%d",
-                min_value=0,
-                max_value=int(df_tabla['Cant'].max()) if not df_tabla.empty else 100,
-            )
+            "SKU": st.column_config.TextColumn("Código SKU"),
+            "Cant": st.column_config.NumberColumn("Unidades", format="%d 👟", help="Suma de unidades vendidas"),
+            "Disciplina": st.column_config.TextColumn("Categoría")
         }
     )
