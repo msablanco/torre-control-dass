@@ -14,7 +14,8 @@ st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
 COLOR_MAP_DIS = {
     'SPORTSWEAR': '#0055A4', 'RUNNING': '#87CEEB', 'TRAINING': '#FF3131', 
     'HERITAGE': '#00A693', 'KIDS': '#FFB6C1', 'TENNIS': '#FFD700', 
-    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000', 'OTRO': '#D3D3D3'
+    'SANDALS': '#90EE90', 'OUTDOOR': '#8B4513', 'FOOTBALL': '#000000', 
+    'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
 
 # --- 2. CARGA DE DATOS ---
@@ -29,8 +30,7 @@ def load_data():
         dfs = {}
         for item in results.get('files', []):
             request = service.files().get_media(fileId=item['id'])
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
+            fh = io.BytesIO(); downloader = MediaIoBaseDownload(fh, request)
             done = False
             while not done: _, done = downloader.next_chunk()
             fh.seek(0)
@@ -47,8 +47,8 @@ def clean_df(df):
     df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
     c_cant = next((c for c in df.columns if any(x in c for x in ['UNID', 'CANT'])), 'CANT')
     df['Cant'] = pd.to_numeric(df[c_cant], errors='coerce').fillna(0)
-    c_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'MES'])), 'FECHA')
-    df['Fecha_dt'] = pd.to_datetime(df[c_fecha], dayfirst=True, errors='coerce')
+    c_fec = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'MES'])), 'FECHA')
+    df['Fecha_dt'] = pd.to_datetime(df[c_fec], dayfirst=True, errors='coerce')
     df['Mes'] = df['Fecha_dt'].dt.strftime('%Y-%m')
     df['EMPRENDIMIENTO'] = df.get('EMPRENDIMIENTO', 'S/E').fillna('S/E').astype(str).str.strip().str.upper()
     df['CLIENTE'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.strip().str.upper()
@@ -57,31 +57,31 @@ def clean_df(df):
 data = load_data()
 
 if data:
-    # --- MAESTRO DE PRODUCTOS ---
+    # --- MAESTRO DE PRODUCTOS (LA REFERENCIA) ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-        # Limpieza para evitar TypeError en sorted
-        df_ma['FRANJA_PRECIO'] = df_ma.get('FRANJA_PRECIO', 'OTRO').fillna('OTRO').astype(str).str.upper()
-        df_ma['DISCIPLINA'] = df_ma.get('DISCIPLINA', 'OTRO').fillna('OTRO').astype(str).str.upper()
-        df_ma['DESCRIPCION'] = df_ma.get('DESCRIPCION', '').fillna('').astype(str).str.upper()
+        # Normalizamos valores del maestro: si está vacío en el CSV, ponemos "SIN CATEGORIA"
+        df_ma['FRANJA_PRECIO'] = df_ma.get('FRANJA_PRECIO', 'SIN CATEGORIA').replace(['', 'NAN', 'NONE'], None).fillna('SIN CATEGORIA').astype(str).str.upper()
+        df_ma['DISCIPLINA'] = df_ma.get('DISCIPLINA', 'SIN CATEGORIA').replace(['', 'NAN', 'NONE'], None).fillna('SIN CATEGORIA').astype(str).str.upper()
+        df_ma['DESCRIPCION'] = df_ma.get('DESCRIPCION', 'SIN DESCRIPCION').replace(['', 'NAN', 'NONE'], None).fillna('SIN DESCRIPCION').astype(str).str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-    
+
     so_raw = clean_df(data.get('Sell_out'))
     si_raw = clean_df(data.get('Sell_in'))
     stk_raw = clean_df(data.get('Stock'))
 
-    # --- 3. SIDEBAR (FILTROS COMPLETOS) ---
+    # --- 3. SIDEBAR (FILTROS) ---
     st.sidebar.header("🔍 Panel de Filtros")
     f_search = st.sidebar.text_input("🎯 SKU / Descripción").upper()
-    
     meses_dis = sorted(list(set(so_raw['Mes'].dropna())), reverse=True) if not so_raw.empty else []
     f_mes = st.sidebar.selectbox("📅 Mes", ["Todos"] + meses_dis)
     
-    opts_dis = sorted([str(x) for x in df_ma['DISCIPLINA'].unique() if pd.notna(x)]) if not df_ma.empty else []
+    # Listas para filtros con "SIN CATEGORIA" incluida si existe
+    opts_dis = sorted([str(x) for x in df_ma['DISCIPLINA'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
     f_dis = st.sidebar.multiselect("👟 Disciplina", opts_dis)
     
-    opts_fra = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique() if pd.notna(x)]) if not df_ma.empty else []
+    opts_fra = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
     f_fra = st.sidebar.multiselect("💰 Franja de Precio", opts_fra)
     
     st.sidebar.divider()
@@ -93,7 +93,14 @@ if data:
 
     def apply_filters(df, is_so=False):
         if df.empty: return df
+        # ASOCIACIÓN (VLOOKUP): Si el SKU no está en el maestro, las columnas nuevas quedan como NaN
         temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION']], on='SKU', how='left')
+        
+        # REEMPLAZO POST-CRUCE: Si el SKU no existía en el maestro, forzamos "SIN CATEGORIA"
+        temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
+        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
+        temp['DESCRIPCION'] = temp['DESCRIPCION'].fillna('SKU NO EN MAESTRO')
+
         if f_search: temp = temp[temp['SKU'].str.contains(f_search, na=False) | temp['DESCRIPCION'].str.contains(f_search, na=False)]
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
@@ -110,27 +117,26 @@ if data:
     st.subheader("📊 Resumen Performance")
     stk_max = stk_f[stk_f['Fecha_dt'] == stk_f['Fecha_dt'].max()] if not stk_f.empty else pd.DataFrame()
     
-    k1, k2, k3, k4, k5 = st.columns(5)
+    k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out Total", f"{so_f['Cant'].sum():,.0f}")
     k2.metric("Sell In Total", f"{si_f['Cant'].sum():,.0f}")
     k3.metric("Stock Wholesale", f"{stk_max[stk_max['EMPRENDIMIENTO'] == 'WHOLESALE']['Cant'].sum():,.0f}")
-    k4.metric("Stock Retail", f"{stk_max[stk_max['EMPRENDIMIENTO'] == 'RETAIL']['Cant'].sum():,.0f}")
-    k5.metric("Stock Dass", f"{stk_max[stk_max['EMPRENDIMIENTO'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
+    k4.metric("Stock Dass", f"{stk_max[stk_max['EMPRENDIMIENTO'].str.contains('DASS', na=False)]['Cant'].sum():,.0f}")
 
     # --- 5. GRÁFICOS DE TORTA ---
     st.divider()
-    c_g1, c_g2 = st.columns(2)
-    with c_g1:
-        st.write("### Por Disciplina")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("### Sell Out por Disciplina")
         if not so_f.empty:
-            df_g_dis = so_f.groupby('DISCIPLINA')['Cant'].sum().reset_index()
-            fig_dis = px.pie(df_g_dis, values='Cant', names='DISCIPLINA', color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            fig_dis = px.pie(so_f.groupby('DISCIPLINA')['Cant'].sum().reset_index(), 
+                             values='Cant', names='DISCIPLINA', color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
             st.plotly_chart(fig_dis, use_container_width=True)
-    with c_g2:
-        st.write("### Por Franja de Precio")
+    with c2:
+        st.write("### Sell Out por Franja de Precio")
         if not so_f.empty:
-            df_g_fra = so_f.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index()
-            fig_fra = px.pie(df_g_fra, values='Cant', names='FRANJA_PRECIO', hole=0.3)
+            fig_fra = px.pie(so_f.groupby('FRANJA_PRECIO')['Cant'].sum().reset_index(), 
+                             values='Cant', names='FRANJA_PRECIO', hole=0.3)
             st.plotly_chart(fig_fra, use_container_width=True)
 
     # --- 6. LÍNEA DE TIEMPO ---
@@ -151,19 +157,27 @@ if data:
     t_stk_c = stk_max[stk_max['EMPRENDIMIENTO'] != 'DASS'].groupby('SKU')['Cant'].sum().reset_index(name='Stock Clientes')
     t_stk_d = stk_max[stk_max['EMPRENDIMIENTO'].str.contains('DASS', na=False)].groupby('SKU')['Cant'].sum().reset_index(name='Stock Dass')
     
-    m3_l = meses_dis[:3]
-    t_m3 = so_raw[so_raw['Mes'].isin(m3_l)].groupby(['Mes', 'SKU'])['Cant'].sum().reset_index()
+    m3 = meses_dis[:3]
+    t_m3 = so_raw[so_raw['Mes'].isin(m3)].groupby(['Mes', 'SKU'])['Cant'].sum().reset_index()
     t_max3 = t_m3.groupby('SKU')['Cant'].max().reset_index(name='Max_Mensual_3M')
     
-    df_f = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].copy()
-    for t in [t_so, t_max3, t_stk_c, t_stk_d, t_si]:
-        df_f = df_f.merge(t, on='SKU', how='left')
+    # Unión final asegurando que no falten datos descriptivos
+    df_f = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].copy() if not df_ma.empty else pd.DataFrame(columns=['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO'])
     
+    # Unimos con los movimientos
+    for t in [t_so, t_max3, t_stk_c, t_stk_d, t_si]:
+        df_f = df_f.merge(t, on='SKU', how='outer')
+    
+    # Limpieza final de la tabla
+    df_f['DESCRIPCION'] = df_f['DESCRIPCION'].fillna('SKU SIN MAESTRO')
+    df_f['DISCIPLINA'] = df_f['DISCIPLINA'].fillna('SIN CATEGORIA')
+    df_f['FRANJA_PRECIO'] = df_f['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
     df_f = df_f.fillna(0)
+    
     df_f['MOS'] = (df_f['Stock Clientes'] / df_f['Max_Mensual_3M']).replace([float('inf')], 0).fillna(0).round(1)
     
-    cols = ['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO','Sell out Total','Max_Mensual_3M','Stock Clientes','MOS','Stock Dass','Sell In Total']
-    st.dataframe(df_f[cols].sort_values('Sell out Total', ascending=False), use_container_width=True)
+    cols_ok = ['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO','Sell out Total','Max_Mensual_3M','Stock Clientes','MOS','Stock Dass','Sell In Total']
+    st.dataframe(df_f[cols_ok].sort_values('Sell out Total', ascending=False), use_container_width=True)
 
 else:
-    st.error("No se detectaron datos. Verifique los archivos en Drive.")
+    st.error("Esperando archivos CSV en Google Drive...")
