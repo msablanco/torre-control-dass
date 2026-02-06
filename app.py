@@ -48,7 +48,7 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. MAESTRO (CON LIMPIEZA DE NULOS PARA EVITAR TYPEERROR) ---
+    # --- 2. MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -63,6 +63,7 @@ if data:
         if df.empty: return pd.DataFrame()
         res = pd.DataFrame()
         try:
+            # A=SKU, B=CANT, E=FECHA, F=CLIENTE
             res['SKU'] = df.iloc[:, 0].astype(str).str.strip().str.upper()
             res['CANT'] = pd.to_numeric(df.iloc[:, 1], errors='coerce').fillna(0)
             res['FECHA_DT'] = pd.to_datetime(df.iloc[:, 4], dayfirst=True, errors='coerce')
@@ -71,7 +72,7 @@ if data:
             return res
         except: return pd.DataFrame()
 
-    # --- 4. VENTAS ---
+    # --- 4. VENTAS (INTOUCHABLE) ---
     def process_sales(name):
         df = data.get(name, pd.DataFrame()).copy()
         if df.empty: return pd.DataFrame()
@@ -88,11 +89,10 @@ if data:
     so_raw = process_sales('Sell_out')
     si_raw = process_sales('Sell_in')
 
-    # --- 5. FILTROS EN BARRA LATERAL (CORREGIDOS) ---
+    # --- 5. FILTROS EN BARRA LATERAL ---
     st.sidebar.header("🔍 Filtros de Control")
     search_sku = st.sidebar.text_input("🎯 SKU o Descripción").upper()
     
-    # Manejo seguro de nulos y tipos para sorted()
     meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
     f_mes = st.sidebar.selectbox("📅 Mes de Análisis", ["Todos"] + meses_op)
     
@@ -122,12 +122,14 @@ if data:
     si_f = apply_filters(si_raw)
 
     # --- 6. MÉTRICAS ---
-    st.title("📊 Torre de Control Dass v11.38")
+    st.title("📊 Turevientan")
     
+    # Stock Dass (Última fecha de DASS)
     df_dass = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]
     max_d_dass = df_dass['FECHA_DT'].max()
     snap_dass = df_dass[df_dass['FECHA_DT'] == max_d_dass]
     
+    # Stock Cliente (Última fecha de WHOLESALE)
     df_wh = stk_f[stk_f['CLIENTE_UP'].str.contains('WHOLESALE', na=False)]
     max_d_wh = df_wh['FECHA_DT'].max()
     snap_wh = df_wh[df_wh['FECHA_DT'] == max_d_wh]
@@ -140,6 +142,7 @@ if data:
 
     # --- 7. GRÁFICOS ---
     st.divider()
+    st.subheader("📌 Análisis por Disciplina")
     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
     with c1:
         st.plotly_chart(px.pie(snap_dass.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
@@ -163,7 +166,7 @@ if data:
     with f4:
         st.plotly_chart(px.bar(si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja", color_discrete_map=COLOR_MAP_FRA, text_auto='.2s'), use_container_width=True)
 
-    # --- 8. HISTÓRICO ---
+    # --- 8. HISTÓRICO (CORREGIDO NAMEERROR) ---
     st.divider()
     st.subheader("📈 Evolución Temporal")
     h_so = apply_filters(so_raw, is_stock=False).groupby('MES')['CANT'].sum().reset_index(name='SO')
@@ -171,23 +174,28 @@ if data:
     h_stk = apply_filters(stk_raw, is_stock=True)
     h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='SD')
     h_sc = h_stk[h_stk['CLIENTE_UP'].str.contains('WHOLESALE', na=False)].groupby('MES')['CANT'].sum().reset_index(name='SC')
+    
     df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
     
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SO'], name='Sell Out', line=dict(color='#0055A4', width=3)))
-    fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SI'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
-    fig.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SD'], name='Stock Dass', line=dict(color='#00A693')))
+    fig_h = go.Figure()
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SO'], name='Sell Out', line=dict(color='#0055A4', width=3)))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SI'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
+    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SD'], name='Stock Dass', line=dict(color='#00A693')))
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['SC'], name='Stock Cliente', line=dict(color='#FFD700')))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig_h, use_container_width=True)
 
-    # --- 9. TABLA ---
+    # --- 9. TABLA DE DATOS ---
     st.divider()
     st.subheader("📋 Detalle por SKU")
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
     t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
     t_sd = snap_dass.groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
     t_sc = snap_wh.groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
+    
     df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_si, on='SKU', how='left').merge(t_sd, on='SKU', how='left').merge(t_sc, on='SKU', how='left').fillna(0)
-    st.dataframe(df_final[df_final[['Sell Out', 'Sell In', 'Stock Dass', 'Stock Cliente']].sum(axis=1) > 0].sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
+    
+    mask = (df_final['Sell Out'] > 0) | (df_final['Sell In'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Stock Cliente'] > 0)
+    st.dataframe(df_final[mask].sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
+
 else:
-    st.error("Error al conectar con Drive.")
+    st.error("No se detectaron archivos en Drive.")
