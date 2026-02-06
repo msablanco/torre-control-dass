@@ -7,7 +7,7 @@ import io
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dass Performance v5.6", layout="wide")
+st.set_page_config(page_title="Ranking Performance Dass", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_data():
@@ -41,84 +41,84 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 1. PROCESAMIENTO ---
+    # --- 1. PROCESAMIENTO CON LÓGICA DE FOTO VS FLUJO ---
     df_base = data.get('Maestro_Productos', pd.DataFrame()).copy()
     
-    def clean_agg(df_name, val_col, new_name):
+    # FLUJO: Sell In y Sell Out se SUMAN
+    def get_flujo(df_name, col_val, new_name):
         if df_name in data:
-            df_tmp = data[df_name].copy()
-            df_tmp[new_name] = pd.to_numeric(df_tmp[val_col], errors='coerce').fillna(0)
-            return df_tmp.groupby('SKU').agg({new_name: 'sum', 'Cliente': 'first'}).reset_index()
+            temp = data[df_name].copy()
+            temp[new_name] = pd.to_numeric(temp[col_val], errors='coerce').fillna(0)
+            return temp.groupby('SKU')[new_name].sum().reset_index()
         return pd.DataFrame(columns=['SKU', new_name])
 
-    si = clean_agg('Sell_in', 'Unidades', 'Sell In')
-    so = clean_agg('Sell_out', 'Unidades', 'Sell Out')
-    
-    stk_raw = data.get('Stock', pd.DataFrame()).copy()
-    if not stk_raw.empty:
-        stk_raw['Cant'] = pd.to_numeric(stk_raw['Cantidad'], errors='coerce').fillna(0)
-        stk_raw['Ubicacion'] = stk_raw['Ubicacion'].fillna('').astype(str).str.upper()
-        mask_dass = stk_raw['Ubicacion'].str.contains('DASS|CENTRAL|DEPOSITO', na=False)
-        st_dass = stk_raw[mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Dass'})
-        st_cli = stk_raw[~mask_dass].groupby('SKU')['Cant'].sum().reset_index().rename(columns={'Cant': 'Stock Clientes'})
-    else:
-        st_dass = st_cli = pd.DataFrame(columns=['SKU', 'Stock Dass', 'Stock Clientes'])
+    # FOTO: El Stock NO se suma, se toma la última posición (last)
+    def get_foto(df_name, col_val, new_name, filter_dass=None):
+        if df_name in data:
+            temp = data[df_name].copy()
+            temp[new_name] = pd.to_numeric(temp[col_val], errors='coerce').fillna(0)
+            temp['Ubicacion'] = temp['Ubicacion'].fillna('').astype(str).str.upper()
+            
+            if filter_dass is True:
+                temp = temp[temp['Ubicacion'].str.contains('DASS|CENTRAL|DEPOSITO', na=False)]
+            elif filter_dass is False:
+                temp = temp[~temp['Ubicacion'].str.contains('DASS|CENTRAL|DEPOSITO', na=False)]
+            
+            # Tomamos la última foto por SKU (no sumamos ubicaciones/meses)
+            return temp.groupby('SKU')[new_name].last().reset_index()
+        return pd.DataFrame(columns=['SKU', new_name])
 
-    df = df_base.merge(si, on='SKU', how='left').merge(so, on='SKU', how='left')
-    df = df.merge(st_dass, on='SKU', how='left').merge(st_cli, on='SKU', how='left').fillna(0)
+    si = get_flujo('Sell_in', 'Unidades', 'Sell in')
+    so_cli = get_flujo('Sell_out', 'Unidades', 'Sell out Clientes')
+    so_tnd = get_flujo('Sell_out_Tiendas', 'Unidades', 'Sell out tiendas')
+    
+    st_dass = get_foto('Stock', 'Cantidad', 'Stock Dass', filter_dass=True)
+    st_cli = get_foto('Stock', 'Cantidad', 'Stock Clientes', filter_dass=False)
 
-    # --- 2. FILTROS INTELIGENTES ---
-    df_active = df[(df['Sell In'] > 0) | (df['Sell Out'] > 0) | (df['Stock Clientes'] > 0)].copy()
-    
-    st.sidebar.header("🔍 Filtros")
-    cli_opt = sorted([str(x) for x in df_active['Cliente'].unique() if x not in ['0', 'nan']])
-    sel_cli = st.sidebar.multiselect("Cliente", cli_opt)
-    disc_opt = sorted([str(x) for x in df_active['Disciplina'].unique() if x not in ['0', 'nan']])
-    sel_disc = st.sidebar.multiselect("Franja (Disciplina)", disc_opt)
+    # MERGE FINAL
+    df = df_base.merge(si, on='SKU', how='left').merge(so_cli, on='SKU', how='left')
+    df = df.merge(so_tnd, on='SKU', how='left').merge(st_dass, on='SKU', how='left').merge(st_cli, on='SKU', how='left')
+    df = df.fillna(0)
 
-    if sel_cli: df = df[df['Cliente'].isin(sel_cli)]
-    if sel_disc: df = df[df['Disciplina'].isin(sel_disc)]
+    # --- 2. CÁLCULOS DE RATIOS ---
+    df['Relacion Stock/Sell in'] = np.where(df['Sell in'] > 0, (df['Stock Dass'] + df['Stock Clientes']) / df['Sell in'], 0)
+    df['Relacion stock clientes/Sell out'] = np.where(df['Sell out Clientes'] > 0, df['Stock Clientes'] / df['Sell out Clientes'], 0)
 
-    # --- 3. DASHBOARD VISUAL ---
-    st.title("👟 Dashboard de Gestión por Franja")
+    # --- 3. FILTROS ---
+    st.sidebar.header("🔍 Filtros Dinámicos")
+    for col in ['Disciplina', 'Genero']:
+        if col in df.columns:
+            opts = sorted([str(x) for x in df[col].unique() if x != 0])
+            sel = st.sidebar.multiselect(f"Filtrar {col}", opts)
+            if sel: df = df[df[col].isin(sel)]
 
-    # Gráficos DASS (Fila 1)
-    st.subheader("🏢 Gestión de Inventario y Despacho DASS")
-    col1, col2 = st.columns(2)
+    # --- 4. VISUALIZACIÓN ---
+    st.title("📊 Ranking de Performance Dass v5.8")
     
-    fig_stk_dass = px.pie(df[df['Stock Dass']>0], values='Stock Dass', names='Disciplina', title="Participación Stock DASS")
-    col1.plotly_chart(fig_stk_dass, use_container_width=True)
-    
-    fig_si_dass = px.pie(df[df['Sell In']>0], values='Sell In', names='Disciplina', title="Participación Sell In (Ingresos)")
-    col2.plotly_chart(fig_si_dass, use_container_width=True)
+    # Gráficos de Torta
+    c1, c2, c3 = st.columns(3)
+    with c1: st.plotly_chart(px.pie(df[df['Stock Dass']>0], values='Stock Dass', names='Disciplina', title="Stock Dass (Foto)"), use_container_width=True)
+    with c2: st.plotly_chart(px.pie(df[df['Sell out Clientes']>0], values='Sell out Clientes', names='Disciplina', title="Sell Out (Flujo)"), use_container_width=True)
+    with c3: st.plotly_chart(px.pie(df[df['Sell in']>0], values='Sell in', names='Disciplina', title="Ingresos (Flujo)", hole=0.4), use_container_width=True)
 
-    st.divider()
+    # --- 5. TABLA DE RANKING CON SEMÁFOROS ---
+    st.subheader("🏆 Ranking de Productos y Alertas de Rotación")
 
-    # Gráficos Clientes (Fila 2)
-    st.subheader("🛍️ Performance en Punto de Venta (Clientes)")
-    col3, col4, col5 = st.columns(3)
-    
-    fig_so_cli = px.pie(df[df['Sell Out']>0], values='Sell Out', names='Disciplina', title="Sell Out por Franja")
-    col3.plotly_chart(fig_so_cli, use_container_width=True)
-    
-    fig_stk_cli = px.pie(df[df['Stock Clientes']>0], values='Stock Clientes', names='Disciplina', title="Stock Clientes por Franja")
-    col4.plotly_chart(fig_stk_cli, use_container_width=True)
-    
-    # Ingresos (Usando Sell In como proxy de ingresos al canal)
-    fig_ing = px.pie(df[df['Sell In']>0], values='Sell In', names='Disciplina', title="Ingresos por Franja", hole=0.3)
-    col5.plotly_chart(fig_ing, use_container_width=True)
+    def color_rotacion(val):
+        color = 'background-color: #ffcccc; color: #990000' if val > 3 else ''
+        return color
 
-    # --- 4. TABLA DETALLADA ---
-    st.divider()
-    st.subheader("📋 Detalle Unificado")
-    
-    df['Sell Through %'] = np.where(df['Sell In'] > 0, (df['Sell Out'] / df['Sell In']) * 100, 0)
-    
-    cols = ['SKU', 'Descripcion', 'Disciplina', 'Color', 'Sell In', 'Sell Out', 'Stock Clientes', 'Stock Dass', 'Sell Through %']
+    cols_order = ['SKU', 'Descripcion', 'Sell in', 'Sell out Clientes', 'Sell out tiendas', 'Stock Dass', 'Stock Clientes', 'Relacion Stock/Sell in', 'Relacion stock clientes/Sell out']
+    df_ranking = df[[c for c in cols_order if c in df.columns]].sort_values('Sell out Clientes', ascending=False)
+
     st.dataframe(
-        df[cols].style.format({'Sell In': '{:,.0f}', 'Sell Out': '{:,.0f}', 'Stock Clientes': '{:,.0f}', 'Stock Dass': '{:,.0f}', 'Sell Through %': '{:.1f}%'}),
-        use_container_width=True, height=400
+        df_ranking.style.format({
+            'Sell in': '{:,.0f}', 'Sell out Clientes': '{:,.0f}', 'Sell out tiendas': '{:,.0f}',
+            'Stock Dass': '{:,.0f}', 'Stock Clientes': '{:,.0f}',
+            'Relacion Stock/Sell in': '{:.2f}', 'Relacion stock clientes/Sell out': '{:.2f}'
+        }).map(color_rotacion, subset=['Relacion stock clientes/Sell out']),
+        use_container_width=True, height=600
     )
 
 else:
-    st.info("Cargando datos desde Drive...")
+    st.info("Aguardando archivos de Drive...")
