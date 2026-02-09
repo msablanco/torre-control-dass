@@ -183,6 +183,116 @@ if data:
     df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
     df_final = df_final[(df_final['Sell Out'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Sell In'] > 0)]
     st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
+# =================================================================
+# NUEVAS SECCIONES DE INTELIGENCIA: RANKINGS, TENDENCIAS Y QUIEBRES
+# =================================================================
+
+# --- J. FILTROS DE PERIODOS PARA COMPARATIVA (AÑADIR A SIDEBAR O INICIO DE BLOQUE) ---
+st.divider()
+st.header("🏆 Inteligencia de Rankings y Tendencias")
+
+col_sel1, col_sel2 = st.columns(2)
+with col_sel1:
+    mes_actual = st.selectbox("Periodo Reciente (A)", meses_op, index=0, key="mes_act")
+with col_sel2:
+    mes_anterior = st.selectbox("Periodo Anterior (B)", meses_op, index=min(1, len(meses_op)-1), key="mes_ant")
+
+# --- K. LÓGICA DE RANKING DINÁMICO ---
+# 1. Calcular ventas por SKU para cada periodo
+rank_a = so_raw[so_raw['MES'] == mes_actual].groupby('SKU')['CANT'].sum().reset_index()
+rank_b = so_raw[so_raw['MES'] == mes_anterior].groupby('SKU')['CANT'].sum().reset_index()
+
+# 2. Asignar el puesto (Rank) basado en la cantidad vendida
+rank_a['Puesto_A'] = rank_a['CANT'].rank(ascending=False, method='min')
+rank_b['Puesto_B'] = rank_b['CANT'].rank(ascending=False, method='min')
+
+# 3. Unir rankings con el maestro de productos
+df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rank_a[['SKU', 'Puesto_A', 'CANT']], on='SKU', how='inner')
+df_rank = df_rank.merge(rank_b[['SKU', 'Puesto_B']], on='SKU', how='left').fillna({'Puesto_B': 999})
+
+# 4. Calcular el salto de ranking
+df_rank['Salto'] = df_rank['Puesto_B'] - df_rank['Puesto_A']
+
+# Visualización de Ganadores
+st.subheader(f"🔥 Los más vendidos en {mes_actual}")
+top_actual = df_rank.sort_values('Puesto_A').head(10).copy()
+
+def format_salto(val):
+    if val > 500: return "🆕 Nuevo"
+    if val > 0: return f"⬆️ +{int(val)}"
+    if val < 0: return f"⬇️ {int(val)}"
+    return "➡️ ="
+
+top_actual['Evolución'] = top_actual['Salto'].apply(format_salto)
+st.dataframe(
+    top_actual[['Puesto_A', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución']]
+    .rename(columns={'Puesto_A': 'Pos', 'CANT': 'Pares'}),
+    use_container_width=True, hide_index=True
+)
+
+# --- L. RANKING POR DISCIPLINA ---
+st.divider()
+st.subheader("👟 Explorador Táctico por Disciplina")
+disciplinas_disponibles = sorted(df_rank['DISCIPLINA'].unique())
+disciplina_select = st.selectbox("Seleccioná una Disciplina para profundizar:", disciplinas_disponibles)
+
+df_rank_dis = df_rank[df_rank['DISCIPLINA'] == disciplina_select].copy()
+df_rank_dis['Pos_Categoría'] = df_rank_dis['CANT'].rank(ascending=False, method='min')
+
+col_l1, col_l2 = st.columns([2, 1])
+with col_l1:
+    st.markdown(f"**Top 10 de {disciplina_select}**")
+    df_dis_show = df_rank_dis.sort_values('Pos_Categoría').head(10).copy()
+    df_dis_show['Evolución'] = df_dis_show['Salto'].apply(lambda x: "🔥 Nuevo" if x > 500 else (f"🔼 +{int(x)}" if x > 0 else (f"🔽 {int(x)}" if x < 0 else "⏺️ =")))
+    st.dataframe(df_dis_show[['Pos_Categoría', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución']], use_container_width=True, hide_index=True)
+
+with col_l2:
+    total_cat = df_rank_dis['CANT'].sum()
+    st.metric(f"Total {disciplina_select}", f"{total_cat:,.0f}")
+    fig_mini = px.bar(df_dis_show.head(5), x='CANT', y='SKU', orientation='h', 
+                      color_discrete_sequence=[COLOR_MAP_DIS.get(disciplina_select, '#0055A4')], text_auto='.2s')
+    fig_mini.update_layout(height=250, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
+    st.plotly_chart(fig_mini, use_container_width=True)
+
+# --- M. SEMÁFORO DE RIESGO DE QUIEBRE (MOS - MESES) ---
+st.divider()
+st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura Mensual")
+
+# Unir con Stock actual (usando las variables t_sd y t_sc ya calculadas en tu script)
+df_alerta = df_rank.merge(t_sd, on='SKU', how='left').merge(t_sc, on='SKU', how='left').fillna(0)
+df_alerta['Stock_Total'] = df_alerta['Stock Dass'] + df_alerta['Stock Cliente']
+# Cálculo de MOS: Meses de Stock
+df_alerta['MOS_Proyectado'] = (df_alerta['Stock_Total'] / df_alerta['CANT']).replace([float('inf'), -float('inf')], 0).fillna(0)
+
+def definir_semaforo_mensual(row):
+    if row['Salto'] >= 5 and row['MOS_Proyectado'] < 1.0 and row['CANT'] > 0: return '🔴 CRÍTICO: < 1 Mes'
+    elif row['Salto'] > 0 and row['MOS_Proyectado'] < 2.0 and row['CANT'] > 0: return '🟡 ADVERTENCIA: < 2 Meses'
+    else: return '🟢 OK: Stock Suficiente'
+
+df_alerta['Estado'] = df_alerta.apply(definir_semaforo_mensual, axis=1)
+df_riesgo = df_alerta[df_alerta['Estado'] != '🟢 OK: Stock Suficiente'].sort_values(['Salto', 'MOS_Proyectado'], ascending=[False, True])
+
+if not df_riesgo.empty:
+    st.warning(f"Se detectaron {len(df_riesgo)} productos en riesgo de quiebre inminente.")
+    st.dataframe(
+        df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'DISCIPLINA', 'Salto', 'CANT', 'MOS_Proyectado']]
+        .rename(columns={'Salto': 'Puestos Subidos', 'CANT': 'Venta Mes', 'MOS_Proyectado': 'Meses Stock'}),
+        use_container_width=True, hide_index=True
+    )
+    # Botón de exportación
+    csv = df_riesgo.to_csv(index=False).encode('utf-8')
+    st.download_button(label="📥 Descargar Lista de Reposición (CSV)", data=csv, file_name=f'reposicion_{mes_actual}.csv', mime='text/csv')
+else:
+    st.success("✅ No hay productos estrella con riesgo de quiebre (cobertura > 2 meses).")
+
+# Mapa de Calor MOS
+fig_mos = px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS_Proyectado', size='CANT', color='Estado',
+                     hover_name='DESCRIPCION', title="Mapa de Velocidad vs Meses de Cobertura (MOS)",
+                     color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745'})
+fig_mos.add_hline(y=1.0, line_dash="dot", line_color="red", annotation_text="Peligro: < 1 Mes")
+fig_mos.add_hline(y=2.0, line_dash="dot", line_color="orange", annotation_text="Alerta: < 2 Meses")
+st.plotly_chart(fig_mos, use_container_width=True)
 else:
     st.error("No se detectaron archivos.")
+
 
