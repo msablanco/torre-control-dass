@@ -119,7 +119,7 @@ if data:
     so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
 
     # --- 6. CABECERA Y KPIs ---
-    st.title("📊 Torre de Control Dass v11.38")
+    st.title("📊 Performance & Inteligencia - Fila Calzado")
     
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out (Filtro)", f"{so_f['CANT'].sum():,.0f}")
@@ -262,3 +262,4 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
