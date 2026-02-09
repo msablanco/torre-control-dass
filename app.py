@@ -20,7 +20,7 @@ COLOR_MAP_DIS = {
 
 COLOR_MAP_FRA = {
     'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
-    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
+    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3', 'KIDS': '#FFB6C1', 'SANDALS': '#FF3131'
 }
 
 # --- 2. CARGA DE DATOS ---
@@ -262,4 +262,5 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
