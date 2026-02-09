@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Dass Performance v11.38", layout="wide")
+st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
 
 # --- 1. CONFIGURACIÓN VISUAL (MAPAS DE COLORES CONSISTENTES) ---
 COLOR_MAP_DIS = {
@@ -107,7 +107,7 @@ if data:
     so_f, si_f, stk_f = apply_logic(so_raw), apply_logic(si_raw), apply_logic(stk_raw)
 
     # --- 5. CABECERA Y KPIs ---
-    st.title("📊 Torre de Control Dass v11.38")
+    st.title("📊 Performance & Inteligencia => Fila Calzado")
     max_date = stk_f['FECHA_DT'].max() if not stk_f.empty else None
     stk_snap = stk_f[stk_f['FECHA_DT'] == max_date] if max_date else pd.DataFrame()
     
@@ -265,3 +265,4 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
