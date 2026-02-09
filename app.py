@@ -106,18 +106,27 @@ if data:
 
     so_f, si_f, stk_f = apply_logic(so_raw), apply_logic(si_raw), apply_logic(stk_raw)
 
-    # --- 5. CABECERA Y KPIs ---
-    st.title("📊 Performance & Inteligencia => Fila Calzado")
-    max_date = stk_f['FECHA_DT'].max() if not stk_f.empty else None
-    stk_snap = stk_f[stk_f['FECHA_DT'] == max_date] if max_date else pd.DataFrame()
+    # --- 5. CABECERA Y KPIs (CORREGIDO) ---
+    st.title("📊 Torre de Control Dass v11.38")
     
+    # Buscamos la fecha más reciente SOLO en el archivo de stock original
+    if not stk_raw.empty:
+        max_date_stk = stk_raw['FECHA_DT'].max()
+        # El Stock Snapshot SIEMPRE será la última foto disponible en el CSV
+        stk_snap = stk_raw[stk_raw['FECHA_DT'] == max_date_stk]
+    else:
+        stk_snap = pd.DataFrame()
+
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out", f"{so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In", f"{si_f['CANT'].sum():,.0f}")
+    k1.metric("Sell Out (Filtro)", f"{so_f['CANT'].sum():,.0f}")
+    k2.metric("Sell In (Filtro)", f"{si_f['CANT'].sum():,.0f}")
+    
+    # Calculamos stock sobre la última foto real, ignorando el filtro de mes lateral
     val_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k3.metric("Stock Dass", f"{val_d:,.0f}")
+    k3.metric("Stock Dass (Actual)", f"{val_d:,.0f}")
+    
     val_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k4.metric("Stock Cliente", f"{val_c:,.0f}")
+    k4.metric("Stock Cliente (Actual)", f"{val_c:,.0f}")
 
     # --- 6. GRÁFICOS POR DISCIPLINA ---
     st.divider()
@@ -265,4 +274,5 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
