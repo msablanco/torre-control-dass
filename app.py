@@ -185,9 +185,7 @@ if data:
         if not so_f.empty:
             st.plotly_chart(px.bar(so_f.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Sell Out por Canal", color_discrete_sequence=['#0055A4']), use_container_width=True)
     with f3:
-        if not snap_wh.empty:
-            st.plotly_chart(px.bar(snap_wh.groupby('EMPRENDIMIENTO')['CANT'].sum().reset_index(), x='EMPRENDIMIENTO', y='CANT', title="Stock Cliente por Canal", color_discrete_sequence=['#FFD700']), use_container_width=True)
-
+    
     # --- 10. MATRIZ SKU ---
     st.divider()
     st.subheader("📋 Matriz de Inteligencia por SKU")
@@ -203,3 +201,4 @@ if data:
 
 else:
     st.error("Error crítico: No se pudieron cargar los archivos desde Google Drive.")
+
