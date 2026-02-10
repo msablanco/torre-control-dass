@@ -165,48 +165,43 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-# --- 7. IA Y DASHBOARD (MODO BAJO CONSUMO) ---
+# --- 7. IA BAJO DEMANDA (Cero consumo automático) ---
     st.divider()
     
-    # 1. Inicializamos la memoria para que la respuesta no desaparezca al mover filtros
-    if 'respuesta_ia' not in st.session_state:
-        st.session_state.respuesta_ia = ""
+    # Usamos session_state para que el resultado no se borre al filtrar otros datos
+    if 'resultado_estratégico' not in st.session_state:
+        st.session_state.resultado_estratégico = ""
 
-    with st.expander("🤖 Abrir Asistente de IA", expanded=True):
-        # Usamos un formulario para agrupar la pregunta y el botón
-        # Esto evita que Streamlit intente conectar a la IA mientras escribes
-        with st.form("form_ia"):
-            u_q = st.text_input("Haz una pregunta específica sobre los datos de Dass:")
-            btn_preguntar = st.form_submit_button("🚀 Consultar IA")
+    with st.expander("🤖 Abrir Asistente de IA (Activación Manual)", expanded=True):
+        # El st.form asegura que NADA ocurra hasta que presiones el botón
+        with st.form("validador_ia"):
+            u_q = st.text_input("Haz tu pregunta técnica aquí:")
+            enviado = st.form_submit_button("🚀 Ejecutar Análisis")
             
-            if btn_preguntar and u_q:
-                # Preparamos el contexto básico para no saturar de tokens
-                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                ctx = f"Ventas acumuladas Sell Out: {total_so:,.0f} unidades."
+            if enviado and u_q:
+                # Solo aquí dentro se consume cuota de Gemini
+                ctx = f"SO actual: {df_so_f['CANT'].sum():.0f} unidades."
                 
-                with st.spinner("🧠 Pensando..."):
+                with st.spinner("🧠 Conectando con Gemini 2.0..."):
                     try:
-                        # LLAMADA ÚNICA: Solo ocurre al presionar el botón del formulario
                         response = client.models.generate_content(
-                            model="gemini-2.0-flash-lite", 
+                            model="gemini-2.0-flash-lite",
                             contents=f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}"
                         )
-                        # Guardamos en memoria
-                        st.session_state.respuesta_ia = response.text
+                        st.session_state.resultado_estratégico = response.text
                     except Exception as e:
                         if "429" in str(e):
-                            st.error("⏳ Cuota agotada. Espera 1 minuto para la próxima consulta.")
+                            st.error("⏳ Google bloqueó la conexión por exceso de velocidad. Espera 60 segundos.")
                         else:
-                            st.error(f"Error técnico: {e}")
+                            st.error(f"Error: {e}")
 
-        # 2. Mostramos la respuesta guardada (persiste aunque cambies filtros del dashboard)
-        if st.session_state.respuesta_ia:
-            st.markdown("---")
-            st.info(f"**Análisis:** {st.session_state.respuesta_ia}")
+        # La respuesta se muestra fuera del formulario para que sea persistente
+        if st.session_state.resultado_estratégico:
+            st.markdown("### 💡 Resultado del Análisis")
+            st.info(st.session_state.resultado_estratégico)
             
-            # Botón opcional para limpiar la memoria
-            if st.button("Limpiar Chat"):
-                st.session_state.respuesta_ia = ""
+            if st.button("🗑️ Limpiar consulta"):
+                st.session_state.resultado_estratégico = ""
                 st.rerun()
 
     # --- KPIs PRINCIPALES ---
@@ -366,6 +361,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
