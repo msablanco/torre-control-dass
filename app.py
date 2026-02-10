@@ -181,15 +181,18 @@ if data:
             
             with st.spinner("🧠 Analizando..."):
                 try:
-                    # Intentamos con 2.0 Flash Lite (más rápido y gratis)
+                    # Cambiamos a 1.5 Flash para ver si tiene cuota libre
                     response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
+                        model="gemini-1.5-flash",
                         contents=f"Eres analista de la empresa Dass. Contexto: {ctx}. Pregunta: {u_q}"
                     )
                     st.markdown(f"**Análisis de Gemini:**")
                     st.info(response.text)
                 except Exception as e:
-                    st.error(f"La IA está descansando por exceso de uso. Error: {e}")
+                    if "429" in str(e):
+                        st.warning("⏳ Google detectó muchas consultas. Espera 60 segundos y vuelve a intentar. La cuota gratuita se reinicia sola.")
+                    else:
+                        st.error(f"Error inesperado: {e}")
 
     st.divider()
 
@@ -350,6 +353,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
