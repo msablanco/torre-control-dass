@@ -147,7 +147,7 @@ with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=Tr
             except Exception as e:
                 st.error(f"Error de conexión: {e}")
 
-    st.divider() # <--- Verifica que esta línea esté alineada con 'with'
+st.divider() # <--- Verifica que esta línea esté alineada con 'with'
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
@@ -241,6 +241,7 @@ st.divider()
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
