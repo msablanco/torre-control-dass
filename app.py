@@ -146,7 +146,8 @@ if data:
     clientes_so = sorted(df_so_raw['CLIENTE_UP'].unique()) if not df_so_raw.empty else []
     clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
     f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
-
+# --- TÍTULO PRINCIPAL (Pégalo justo después de cerrar el bloque del sidebar) ---
+st.title("📊 Torre de Control: Sell Out & Abastecimiento")
     # --- ASISTENTE IA EN LA BARRA LATERAL ---
     st.sidebar.divider()
     st.sidebar.subheader("🤖 Consultas Dass IA")
@@ -366,6 +367,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
