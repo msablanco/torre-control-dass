@@ -167,9 +167,9 @@ kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
 kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
-    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
-    st.divider()
+st.divider()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
     with col_m1:
         if not df_so_f.empty:
@@ -242,6 +242,7 @@ kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
