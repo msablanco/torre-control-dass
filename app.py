@@ -135,16 +135,17 @@ if data:
 # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
-        u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
-        if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto resumido para la IA
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
+with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=True):
+        user_question = st.chat_input("Consulta tendencias, ingresos o quiebres...")
+        if user_question and "GEMINI_API_KEY" in st.secrets:
+            # Contexto resumido de tus datos actuales para la IA
+            contexto = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingresos: {df_ing_f['CANT'].sum():.0f}."
             try:
-                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Responde breve: {u_q}")
-                st.info(f"**Análisis IA:** {resp.text}")
-            except Exception:
-                st.error("Error en conexión con la IA")
+                # Esta es la parte que hace la conexión real
+                response = model.generate_content(f"Eres analista de Dass. Datos: {contexto}. Responde breve: {user_question}")
+                st.info(f"**Análisis IA:** {response.text}")
+            except Exception as e:
+                st.error(f"Error de conexión: {e}")
 
     st.divider() # <--- Verifica que esta línea esté alineada con 'with'
 
@@ -240,6 +241,7 @@ if data:
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
