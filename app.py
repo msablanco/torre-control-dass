@@ -13,7 +13,7 @@ if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         # Usamos el nombre base. El SDK elegirá la versión v1 o v1beta automáticamente
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
     except Exception as e:
         st.error(f"Error de configuración: {e}")
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -167,7 +167,7 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-   # --- 7. IA Y DASHBOARD ---
+ # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
@@ -176,7 +176,7 @@ if data:
             # Contexto derivado de tus variables filtradas
             ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
             try:
-                # Generación de contenido con el modelo configurado
+                # Generación de contenido
                 resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
@@ -190,8 +190,11 @@ if data:
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
     kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
-    # Cálculo de stock consolidado basado en el snapshot [cite: 12]
-    stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
+    # Cálculo de stock consolidado
+    if not df_stk_snap.empty:
+        stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
+    else:
+        stock_dass = 0
     kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
@@ -338,6 +341,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
