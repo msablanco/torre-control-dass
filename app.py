@@ -180,20 +180,21 @@ if data:
             ctx = f"Ventas actuales (Sell Out): {resumen_ventas} unidades."
             
             with st.spinner("🧠 Analizando..."):
-                try:
-                    # Cambiamos a 1.5 Flash para ver si tiene cuota libre
+               try:
+                    # Usamos el nombre técnico completo que la API v1 reconoce
                     response = client.models.generate_content(
-                        model="gemini-1.5-flash",
-                        contents=f"Eres analista de la empresa Dass. Contexto: {ctx}. Pregunta: {u_q}"
+                        model="gemini-2.0-flash-lite", 
+                        contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                     )
                     st.markdown(f"**Análisis de Gemini:**")
                     st.info(response.text)
                 except Exception as e:
-                    if "429" in str(e):
-                        st.warning("⏳ Google detectó muchas consultas. Espera 60 segundos y vuelve a intentar. La cuota gratuita se reinicia sola.")
+                    if "404" in str(e):
+                        st.error("❌ Error de versión: El modelo no fue encontrado. Intentando reconectar...")
+                    elif "429" in str(e):
+                        st.warning("⏳ Límite alcanzado. Espera 60 segundos.")
                     else:
-                        st.error(f"Error inesperado: {e}")
-
+                        st.error(f"Error: {e}")
     st.divider()
 
     # --- KPIs PRINCIPALES ---
@@ -353,6 +354,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
