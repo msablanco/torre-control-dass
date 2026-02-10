@@ -1,22 +1,12 @@
 import streamlit as st
 import pandas as pd
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-import io
-import plotly.graph_objects as go
-import plotly.express as px
-from google import genai
+from google import genai  # Importante: la nueva librería
 
-# --- CONFIGURACIÓN IA (GEMINI 2026) ---
+# --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
 if "GEMINI_API_KEY" in st.secrets:
-    try:
-        client = genai.Client(
-            api_key=st.secrets["GEMINI_API_KEY"],
-            http_options={'api_version': 'v1'} # Forzamos v1 para evitar el error 404
-        )
-    except Exception as e:
-        st.error(f"Error al configurar la IA: {e}")
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+else:
+    st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -170,37 +160,30 @@ if data:
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
 # --- 7. IA Y DASHBOARD ---
-    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+    st.divider()
+    st.subheader("🤖 Asistente Estratégico Dass")
 
-    with st.expander("🤖 IA - Asistente Estratégico (Gemini 2.0)", expanded=True):
-        # El chat_input ya funciona como un disparador (trigger)
-        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
+    # Contenedor para la IA
+    with st.expander("Haz una consulta sobre tus datos", expanded=True):
+        u_q = st.chat_input("Ej: ¿Cómo vienen las ventas de este mes vs el anterior?")
         
         if u_q:
-            if "GEMINI_API_KEY" in st.secrets:
-                # Contexto de datos resumido
-                ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-                
-                # st.status o st.spinner muestran que la IA está pensando
-                with st.spinner("🧠 Analizando datos de Dass..."):
-                    try:
-                        # Llamada directa al modelo Lite
-                        response = client.models.generate_content(
-                            model="gemini-2.0-flash-lite", 
-                            contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
-                        )
-                        
-                        # Mostramos el resultado de forma destacada
-                        st.markdown(f"### 💡 Análisis para: '{u_q}'")
-                        st.info(response.text)
-                        
-                    except Exception as e:
-                        if "429" in str(e):
-                            st.warning("⚠️ Google está saturado. Espera 15 segundos y presiona Enter de nuevo.")
-                        else:
-                            st.error(f"Error de conexión: {e}")
-            else:
-                st.error("Falta la GEMINI_API_KEY en los Secrets de Streamlit.")
+            # Preparamos un resumen de datos para que la IA sepa de qué hablamos
+            # Ajusta los nombres de las columnas si son distintos en tu Excel
+            resumen_ventas = df_so_f['CANT'].sum() if not df_so_f.empty else 0
+            ctx = f"Ventas actuales (Sell Out): {resumen_ventas} unidades."
+            
+            with st.spinner("🧠 Analizando..."):
+                try:
+                    # Intentamos con 2.0 Flash Lite (más rápido y gratis)
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash-lite",
+                        contents=f"Eres analista de la empresa Dass. Contexto: {ctx}. Pregunta: {u_q}"
+                    )
+                    st.markdown(f"**Análisis de Gemini:**")
+                    st.info(response.text)
+                except Exception as e:
+                    st.error(f"La IA está descansando por exceso de uso. Error: {e}")
 
     st.divider()
 
@@ -361,6 +344,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
