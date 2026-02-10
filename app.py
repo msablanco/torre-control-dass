@@ -149,25 +149,25 @@ if data:
 
     st.divider()
 
-    # KPIs Principales (Alineados con el bloque anterior)
+    # KPIs Principales
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
     k3.metric("Ingresos 2026", f"{df_ing_f['CANT'].sum():,.0f}")
     
-    # Esta es la línea que fallaba:
+    # Esta es la línea que fallaba (ahora alineada correctamente)
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
 st.divider()
 
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+    kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+    kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
-kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
 st.divider()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
@@ -242,6 +242,7 @@ st.divider()
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
