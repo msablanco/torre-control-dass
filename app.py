@@ -17,8 +17,7 @@ if "GEMINI_API_KEY" in st.secrets:
     model = genai.GenerativeModel('gemini-1.5-flash')
 else:
     st.warning("⚠️ Configura GEMINI_API_KEY en los Secrets de Streamlit para activar la IA.")
-else:
-    st.warning("Configura GEMINI_API_KEY para activar el asistente.")
+
 
 # --- 2. CONFIGURACIÓN VISUAL (MAPAS DE COLORES) ---
 COLOR_MAP_DIS = {
@@ -238,4 +237,5 @@ kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
