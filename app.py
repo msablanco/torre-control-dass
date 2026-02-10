@@ -11,8 +11,8 @@ import google.generativeai as genai
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Cambiamos a 'gemini-1.5-flash-latest' que tiene mayor compatibilidad
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # Usamos 'gemini-pro' que es el nombre más estable para evitar el 404
+    model = genai.GenerativeModel('gemini-pro')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -166,23 +166,22 @@ if data:
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
    # --- 7. IA Y DASHBOARD ---
-    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+   st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-   with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
+    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto resumido
             ctx = f"Venta: {df_so_f['CANT'].sum():.0f}. Stock: {df_stk_snap['CANT'].sum():.0f}."
             try:
-               # Forzamos la generación simple
+                # El modelo 'gemini-pro' suele resolver el error 404
                 resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
                 st.error(f"Error de conexión: {e}")
 
-    st.divider() # Esta línea ahora está alineada correctamente con 'with'
+    st.divider()
 
-    # KPIs Principales
+    # KPIs Principales - Todos alineados a la misma altura (4 espacios)
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
@@ -337,6 +336,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
