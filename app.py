@@ -1,3 +1,4 @@
+import google.generativeai as genai
 import streamlit as st
 import pandas as pd
 from google.oauth2 import service_account
@@ -6,12 +7,11 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-import google.generativeai as genai
 
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Usamos este nombre exacto para evitar el error 404
+    # Cambiamos a este nombre que es el estándar actual
     model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -336,6 +336,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
