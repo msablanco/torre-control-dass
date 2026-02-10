@@ -149,10 +149,10 @@ with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=Tr
 
 st.divider() # <--- Verifica que esta línea esté alineada con 'with'
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-    k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
@@ -160,10 +160,10 @@ st.divider() # <--- Verifica que esta línea esté alineada con 'with'
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
 st.divider()
 
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-    kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-    kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
@@ -241,6 +241,7 @@ st.divider()
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
