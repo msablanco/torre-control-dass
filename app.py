@@ -171,36 +171,28 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-    # --- 7. DIAGNÓSTICO Y IA ---
+    # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    # Bloque de Diagnóstico
-    with st.expander("🔍 Verificación de Modelos Disponibles"):
-        try:
-            modelos_detectados = []
-            for m in client.models.list():
-                modelos_detectados.append(m.name)
-                st.write(f"✅ Modelo detectado: `{m.name}`")
-            
-            if not modelos_detectados:
-                st.warning("No se detectaron modelos. Revisa los permisos de tu API Key.")
-        except Exception as e:
-            st.error(f"Error al listar modelos: {e}")
-
-    # Bloque del Asistente
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
+        
         if u_q and "GEMINI_API_KEY" in st.secrets:
+            # Contexto resumido para ahorrar cuota (tokens)
             ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+            
             try:
-                # Usamos uno de los modelos que SÍ detectó tu diagnóstico
+                # Usamos el modelo LITE para evitar el error 429 de cuota
                 response = client.models.generate_content(
-                    model="gemini-2.0-flash", 
+                    model="gemini-2.0-flash-lite", 
                     contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                 )
                 st.info(f"**Análisis IA:** {response.text}")
             except Exception as e:
-                st.error(f"Error de respuesta: {e}")
+                if "429" in str(e):
+                    st.warning("⚠️ Google está procesando muchas consultas. Espera 30 segundos y presiona Enter de nuevo.")
+                else:
+                    st.error(f"Error de conexión: {e}")
 
     st.divider()
 
@@ -361,6 +353,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
