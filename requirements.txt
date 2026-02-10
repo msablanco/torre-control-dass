@@ -1,4 +1,11 @@
 streamlit
 pandas
-openai
 plotly
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
+# Si vas a usar OpenAI (ChatGPT), añade esta:
+openai
+# Si vas a usar Gemini (Google), añade esta:
+google-genai
