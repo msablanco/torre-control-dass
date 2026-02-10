@@ -6,19 +6,11 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-from google import genai  # Nueva forma de importar
+from openai import OpenAI
 
-# --- CONFIGURACIÓN IA (VERSIÓN FORZADA) ---
-if "GEMINI_API_KEY" in st.secrets:
-    try:
-        # Añadimos el parámetro http_options para forzar la API estable v1
-        client = genai.Client(
-            api_key=st.secrets["GEMINI_API_KEY"],
-            http_options={'api_version': 'v1'} 
-        )
-        model_id = "gemini-2.0-flash-lite"
-    except Exception as e:
-        st.error(f"Error de configuración: {e}")
+# --- CONFIGURACIÓN OPENAI ---
+if "OPENAI_API_KEY" in st.secrets:
+    client_oa = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -175,28 +167,23 @@ if data:
     # Asegúrate de que este bloque esté alineado con el resto de tu código principal
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
-        u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
+    with st.expander("🤖 IA - Asistente ChatGPT", expanded=True):
+        u_q = st.chat_input("Consulta tendencias con ChatGPT...")
         
-        if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Resumen de datos para el contexto
-            total_so = df_so_f['CANT'].sum()
-            total_si = df_si_f['CANT'].sum()
-            ctx = f"SO: {total_so:.0f}. SI: {total_si:.0f}."
+        if u_q and "OPENAI_API_KEY" in st.secrets:
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             
             try:
-                # Usamos el modelo que detectamos en el diagnóstico
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash-lite", 
-                    contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                response = client_oa.chat.completions.create(
+                    model="gpt-4o-mini",  # Modelo rápido y económico
+                    messages=[
+                        {"role": "system", "content": "Eres un analista experto de la empresa Dass."},
+                        {"role": "user", "content": f"Datos: {ctx}. Pregunta: {u_q}"}
+                    ]
                 )
-                st.info(f"**Análisis IA:** {response.text}")
+                st.info(f"**Análisis GPT:** {response.choices[0].message.content}")
             except Exception as e:
-                # Manejo del error de cuota (429) que vimos antes
-                if "429" in str(e):
-                    st.warning("⚠️ Google está procesando muchas consultas. Espera 30 segundos y presiona Enter de nuevo.")
-                else:
-                    st.error(f"Error de conexión: {e}")
+                st.error(f"Error con OpenAI: {e}")
 
     st.divider()
 
@@ -357,6 +344,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
