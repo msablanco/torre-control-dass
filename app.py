@@ -20,231 +20,267 @@ COLOR_MAP_DIS = {
 
 COLOR_MAP_FRA = {
     'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
-    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3', 'KIDS': '#FFB6C1', 'SANDALS': '#FF3131'
+    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
 }
 
-# --- 2. CARGA DE DATOS ---
+# --- 2. CARGA DE DATOS DESDE GOOGLE DRIVE ---
 @st.cache_data(ttl=600)
-def load_data():
+def load_data_from_drive():
     try:
         info = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(info)
         service = build('drive', 'v3', credentials=creds)
         folder_id = st.secrets["google_drive_folder_id"]
-        results = service.files().list(q=f"'{folder_id}' in parents and mimeType='text/csv'", fields="files(id, name)").execute()
+        
+        results = service.files().list(
+            q=f"'{folder_id}' in parents and mimeType='text/csv'",
+            fields="files(id, name)"
+        ).execute()
+        items = results.get('files', [])
+        
+        if not items:
+            st.error("No se encontraron archivos CSV en la carpeta de Google Drive.")
+            return {}
+            
         dfs = {}
-        for item in results.get('files', []):
+        for item in items:
             request = service.files().get_media(fileId=item['id'])
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
             while not done:
-                _, done = downloader.next_chunk()
+                status, done = downloader.next_chunk()
+            
             fh.seek(0)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
+            
+            # Limpieza de nombres de columnas
             df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
-            dfs[item['name'].replace('.csv', '')] = df
+            
+            file_name = item['name'].replace('.csv', '')
+            dfs[file_name] = df
         return dfs
     except Exception as e:
-        st.error(f"Error Drive: {e}")
+        st.error(f"Error al conectar con Google Drive: {e}")
         return {}
 
-data = load_data()
+data = load_data_from_drive()
 
 if data:
-    # --- 3. PROCESAMIENTO INICIAL ---
-    df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    if not df_ma.empty:
-        df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-        df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'FRANJA_PRECIO': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
-            if col not in df_ma.columns: df_ma[col] = default
-            df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
-        df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION']
+    # --- 3. PROCESAMIENTO DEL MAESTRO ---
+    df_maestro = data.get('Maestro_Productos', pd.DataFrame()).copy()
+    if not df_maestro.empty:
+        df_maestro['SKU'] = df_maestro['SKU'].astype(str).str.strip().str.upper()
+        df_maestro = df_maestro.drop_duplicates(subset=['SKU'])
+        
+        if 'DISCIPLINA' not in df_maestro.columns: df_maestro['DISCIPLINA'] = 'SIN CATEGORIA'
+        if 'FRANJA_PRECIO' not in df_maestro.columns: df_maestro['FRANJA_PRECIO'] = 'SIN CATEGORIA'
+        if 'DESCRIPCION' not in df_maestro.columns: df_maestro['DESCRIPCION'] = 'SIN DESCRIPCION'
+        
+        df_maestro['DISCIPLINA'] = df_maestro['DISCIPLINA'].fillna('SIN CATEGORIA').astype(str).str.upper()
+        df_maestro['FRANJA_PRECIO'] = df_maestro['FRANJA_PRECIO'].fillna('SIN CATEGORIA').astype(str).str.upper()
+        df_maestro['DESCRIPCION'] = df_maestro['DESCRIPCION'].fillna('SIN DESCRIPCION').astype(str).str.upper()
+        df_maestro['BUSQUEDA'] = df_maestro['SKU'] + " " + df_maestro['DESCRIPCION']
 
-    def clean_df(name):
-        df = data.get(name, pd.DataFrame()).copy()
-        if df.empty: return pd.DataFrame(columns=['SKU', 'CANT', 'MES', 'FECHA_DT', 'CLIENTE_UP'])
+    # --- 4. LIMPIEZA DE TRANSACCIONALES ---
+    def limpiar_transaccional(df_name):
+        df = data.get(df_name, pd.DataFrame()).copy()
+        if df.empty: return pd.DataFrame()
+        
         df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
-        col_cant = next((c for c in df.columns if any(x in c for x in ['UNIDADES', 'CANTIDAD', 'CANT'])), 'CANT')
-        df['CANT'] = pd.to_numeric(df.get(col_cant, 0), errors='coerce').fillna(0)
-        col_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'ARRIVO', 'MOVIMIENTO'])), 'FECHA')
-        df['FECHA_DT'] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
-        df['MES'] = df['FECHA_DT'].dt.strftime('%Y-%m')
-        df['CLIENTE_UP'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.upper()
+        
+        col_cant = next((c for c in df.columns if any(x in c for x in ['UNIDADES', 'CANTIDAD', 'CANT', 'INGRESOS'])), None)
+        if col_cant:
+            df['CANT'] = pd.to_numeric(df[col_cant], errors='coerce').fillna(0)
+        else:
+            df['CANT'] = 0
+            
+        col_fecha = next((c for c in df.columns if any(x in c for x in ['FECHA', 'VENTA', 'ARRIVO', 'MOVIMIENTO'])), None)
+        if col_fecha:
+            df['FECHA_DT'] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
+            df['MES'] = df['FECHA_DT'].dt.strftime('%Y-%m')
+        
+        if 'CLIENTE' in df.columns:
+            df['CLIENTE_UP'] = df['CLIENTE'].fillna('S/D').astype(str).str.upper()
+        else:
+            df['CLIENTE_UP'] = 'S/D'
+            
         return df
 
-    so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
+    df_so_raw = limpiar_transaccional('Sell_out')
+    df_si_raw = limpiar_transaccional('Sell_in')
+    df_stk_raw = limpiar_transaccional('Stock')
+    df_ing_raw = limpiar_transaccional('Ingresos') # NUEVA CARGA
 
-    # --- 4. LÓGICA DE STOCK SNAPSHOT (CORRECCIÓN CLAVE) ---
-    if not stk_raw.empty:
-        max_date_stk = stk_raw['FECHA_DT'].max()
-        # Tomamos la última foto del stock independientemente del filtro de mes
-        stk_snap = stk_raw[stk_raw['FECHA_DT'] == max_date_stk].copy()
-        # Inyectamos el Maestro de Productos al Stock para evitar KeyErrors en los Mix
-        stk_snap = stk_snap.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION']], on='SKU', how='left')
-        for c in ['DISCIPLINA', 'FRANJA_PRECIO']: stk_snap[c] = stk_snap[c].fillna('SIN CATEGORIA')
+    # Snapshot de Stock Actual (Dass vs Clientes)
+    if not df_stk_raw.empty:
+        max_fecha_stk = df_stk_raw['FECHA_DT'].max()
+        df_stk_snap = df_stk_raw[df_stk_raw['FECHA_DT'] == max_fecha_stk].copy()
+        df_stk_snap = df_stk_snap.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION']], on='SKU', how='left')
+        df_stk_snap['DISCIPLINA'] = df_stk_snap['DISCIPLINA'].fillna('SIN CATEGORIA')
+        df_stk_snap['FRANJA_PRECIO'] = df_stk_snap['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
     else:
-        stk_snap = pd.DataFrame()
+        df_stk_snap = pd.DataFrame()
 
-    # --- 5. FILTROS ---
+    # --- 5. INTERFAZ DE FILTROS ---
     st.sidebar.header("🔍 Filtros Globales")
-    search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
-    meses_op = sorted([str(x) for x in so_raw['MES'].dropna().unique()], reverse=True) if not so_raw.empty else []
-    f_periodo = st.sidebar.selectbox("📅 Mes", ["Todos"] + meses_op)
+    search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo", "").upper()
     
-    opts_dis = sorted([str(x) for x in df_ma['DISCIPLINA'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
-    f_dis = st.sidebar.multiselect("👟 Disciplinas", opts_dis)
-    opts_fra = sorted([str(x) for x in df_ma['FRANJA_PRECIO'].unique()]) if not df_ma.empty else ["SIN CATEGORIA"]
-    f_fra = st.sidebar.multiselect("💰 Franjas", opts_fra)
-    f_cli_so = st.sidebar.multiselect("👤 Cliente SO", sorted(so_raw['CLIENTE_UP'].unique()) if not so_raw.empty else [])
-    f_cli_si = st.sidebar.multiselect("📦 Cliente SI", sorted(si_raw['CLIENTE_UP'].unique()) if not si_raw.empty else [])
-    selected_clients = set(f_cli_so) | set(f_cli_si)
+    meses_disponibles = sorted([str(x) for x in df_so_raw['MES'].dropna().unique()], reverse=True) if not df_so_raw.empty else []
+    mes_actual_default = meses_disponibles[0] if meses_disponibles else None
+    mes_filtro = st.sidebar.selectbox("📅 Mes de Análisis (KPIs y Mix)", ["Todos"] + meses_disponibles, index=0)
 
-    def apply_logic(df, filter_month=True):
+    disciplinas_opts = sorted(list(df_maestro['DISCIPLINA'].unique())) if not df_maestro.empty else []
+    f_disciplina = st.sidebar.multiselect("👟 Disciplina", disciplinas_opts)
+    
+    franjas_opts = sorted(list(df_maestro['FRANJA_PRECIO'].unique())) if not df_maestro.empty else []
+    f_franja = st.sidebar.multiselect("💰 Franja de Precio", franjas_opts)
+
+    clientes_so = sorted(df_so_raw['CLIENTE_UP'].unique()) if not df_so_raw.empty else []
+    clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
+    f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
+
+    # --- 6. APLICACIÓN DE LÓGICA DE FILTROS ---
+    def filtrar_dataframe(df, filtrar_mes=True):
         if df.empty: return df
-        temp = df.copy()
-        temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
-        for c in ['DISCIPLINA', 'FRANJA_PRECIO']: temp[c] = temp[c].fillna('SIN CATEGORIA')
-        if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
-        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
-        if search_query: 
-            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False) | temp['SKU'].str.contains(search_query, na=False)]
-        if filter_month and f_periodo != "Todos":
-            temp = temp[temp['MES'] == f_periodo]
-        if selected_clients:
-            temp = temp[temp['CLIENTE_UP'].isin(selected_clients)]
+        temp = df.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
+        temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
+        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
+        
+        if f_disciplina: temp = temp[temp['DISCIPLINA'].isin(f_disciplina)]
+        if f_franja: temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
+        if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
+        if f_clientes: temp = temp[temp['CLIENTE_UP'].isin(f_clientes)]
+        if filtrar_mes and mes_filtro != "Todos": temp = temp[temp['MES'] == mes_filtro]
         return temp
 
-    so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
+    df_so_f = filtrar_dataframe(df_so_raw)
+    df_si_f = filtrar_dataframe(df_si_raw)
+    df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-    # --- 6. CABECERA Y KPIs ---
-    st.title("📊 Performance & Inteligencia - Fila Calzado")
-    
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out (Filtro)", f"{so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In (Filtro)", f"{si_f['CANT'].sum():,.0f}")
-    
-    val_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k3.metric("Stock Dass (Actual)", f"{val_d:,.0f}")
-    val_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k4.metric("Stock Cliente (Actual)", f"{val_c:,.0f}")
+    # --- 7. IA Y DASHBOARD ---
+    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    # --- 7. ANÁLISIS POR DISCIPLINA ---
+    # NUEVA SECCIÓN: ASISTENTE IA
+    with st.expander("🤖 IA - Consultas Directas sobre la Operación"):
+        user_question = st.text_input("Hazle una pregunta a la IA sobre los datos (ej: ¿Qué SKU ingresó más este mes?)")
+        if user_question:
+            st.info(f"Analizando datos de Ingresos, Facturación y Ventas para responder: '{user_question}'")
+            # Aquí iría la lógica de integración con LLM en el futuro
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+    kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+    kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}") # NUEVO KPI
+    
+    # Stock en Dass (solo los registros que dicen DASS)
+    stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
+    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+
+    # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
-    st.subheader("📌 Análisis por Disciplina")
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    
-    if val_d > 0:
-        c1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if not so_f.empty:
-        c2.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if val_c > 0:
-        c3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    
-    if not si_f.empty:
-        df_bar_dis = si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index()
-        fig_bar_dis = px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Disciplina (Mix)", color_discrete_map=COLOR_MAP_DIS, text_auto='.2s')
-        fig_bar_dis.update_layout(barmode='stack', yaxis_title="Unidades")
-        c4.plotly_chart(fig_bar_dis, use_container_width=True)
+    col_mix1, col_mix2, col_mix3 = st.columns([1, 1, 2])
 
-    # --- 8. ANÁLISIS POR FRANJA ---
-    st.subheader("💰 Análisis por Franja de Precio")
-    f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
-    
-    if val_d > 0:
-        f1.plotly_chart(px.pie(stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    if not so_f.empty:
-        f2.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    if val_c > 0:
-        f3.plotly_chart(px.pie(stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    
-    if not si_f.empty:
-        df_bar_fra = si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index()
-        fig_bar_fra = px.bar(df_bar_fra, x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja (Mix)", color_discrete_map=COLOR_MAP_FRA, text_auto='.2s')
-        fig_bar_fra.update_layout(barmode='stack', yaxis_title="Unidades")
-        f4.plotly_chart(fig_bar_fra, use_container_width=True)
+    with col_mix1:
+        if not df_so_f.empty:
+            mix_so = df_so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index()
+            fig_mix_so = px.pie(mix_so, values='CANT', names='DISCIPLINA', title="Mix Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            st.plotly_chart(fig_mix_so, use_container_width=True)
 
-    # --- 9. EVOLUCIÓN HISTÓRICA ---
-    st.divider()
-    st.subheader("📈 Evolución Histórica Comparativa")
-    h_so = apply_logic(so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
-    h_si = apply_logic(si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell In')
-    h_sd = apply_logic(stk_raw, False)[stk_raw['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Dass')
-    h_sc = apply_logic(stk_raw, False)[~stk_raw['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Cliente')
-    
-    df_h = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
-    fig_h = go.Figure()
-    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
-    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
-    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Stock Dass'], name='Stock Dass', line=dict(color='#00A693', width=2)))
-    fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Stock Cliente'], name='Stock Cliente', line=dict(color='#FFD700', width=2)))
-    st.plotly_chart(fig_h, use_container_width=True)
+    with col_mix2:
+        if not df_stk_snap.empty:
+            mix_stk = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
+            fig_mix_stk = px.pie(mix_stk, values='CANT', names='DISCIPLINA', title="Mix Stock Depósito", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            st.plotly_chart(fig_mix_stk, use_container_width=True)
 
-    # --- 10. DETALLE POR SKU ---
-    st.divider()
-    st.subheader("📋 Detalle por SKU")
-    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
-    t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
-    t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
-    t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
-    
-    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
-    df_final = df_final[(df_final['Sell Out'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Sell In'] > 0)]
-    st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
+    with col_mix3:
+        # Evolución Sell Out vs Sell In vs Ingresos
+        evol_so = filtrar_dataframe(df_so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
+        evol_si = filtrar_dataframe(df_si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell In')
+        evol_ing = filtrar_dataframe(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Ingresos') # NUEVO
+        
+        evol_total = evol_so.merge(evol_si, on='MES', how='outer').merge(evol_ing, on='MES', how='outer').fillna(0).sort_values('MES')
+        
+        fig_evol = go.Figure()
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Ingresos'], name='Ingresos', line=dict(color='#A9A9A9', width=2, dash='dot'))) # NUEVA LÍNEA
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3)))
+        fig_evol.update_layout(title="Flujo Logístico: Ingresos vs Sell In vs Sell Out", hovermode='x unified')
+        st.plotly_chart(fig_evol, use_container_width=True)
 
-    # --- 11. INTELIGENCIA: RANKINGS ---
+    # --- 9. RANKING DE PRODUCTOS Y TENDENCIAS ---
     st.divider()
     st.header("🏆 Inteligencia de Rankings y Tendencias")
+    
     col_sel1, col_sel2 = st.columns(2)
-    with col_sel1: mes_actual = st.selectbox("Periodo Reciente (A)", meses_op, index=0, key="mes_act")
-    with col_sel2: mes_anterior = st.selectbox("Periodo Anterior (B)", meses_op, index=min(1, len(meses_op)-1), key="mes_ant")
+    with col_sel1:
+        mes_actual = st.selectbox("Mes de Comparación (A)", meses_disponibles, index=0, key='ma')
+    with col_sel2:
+        mes_anterior = st.selectbox("Mes Base (B)", meses_disponibles, index=min(1, len(meses_disponibles)-1), key='mb')
 
-    rank_a = so_raw[so_raw['MES'] == mes_actual].groupby('SKU')['CANT'].sum().reset_index()
-    rank_b = so_raw[so_raw['MES'] == mes_anterior].groupby('SKU')['CANT'].sum().reset_index()
-    rank_a['Puesto_A'] = rank_a['CANT'].rank(ascending=False, method='min')
-    rank_b['Puesto_B'] = rank_b['CANT'].rank(ascending=False, method='min')
+    # Lógica de Ranking
+    def obtener_ranking(mes):
+        df_mes = df_so_raw[df_so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index()
+        df_mes['Posicion'] = df_mes['CANT'].rank(ascending=False, method='min')
+        return df_mes
 
-    df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rank_a[['SKU', 'Puesto_A', 'CANT']], on='SKU', how='inner')
-    df_rank = df_rank.merge(rank_b[['SKU', 'Puesto_B']], on='SKU', how='left').fillna({'Puesto_B': 999})
-    df_rank['Salto'] = df_rank['Puesto_B'] - df_rank['Puesto_A']
+    rk_a = obtener_ranking(mes_actual)
+    rk_b = obtener_ranking(mes_anterior)
 
-    st.subheader(f"🔥 Los más vendidos en {mes_actual}")
-    top_actual = df_rank.sort_values('Puesto_A').head(10).copy()
-    top_actual['Evolución'] = top_actual['Salto'].apply(lambda val: "🆕 Nuevo" if val > 500 else (f"⬆️ +{int(val)}" if val > 0 else (f"⬇️ {int(val)}" if val < 0 else "➡️ =")))
-    st.dataframe(top_actual[['Puesto_A', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución']].rename(columns={'Puesto_A': 'Pos', 'CANT': 'Pares'}), use_container_width=True, hide_index=True)
+    df_tendencia = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Posicion', 'CANT']], on='SKU', how='inner')
+    df_tendencia = df_tendencia.merge(rk_b[['SKU', 'Posicion']], on='SKU', how='left', suffixes=('_A', '_B'))
+    df_tendencia['Posicion_B'] = df_tendencia['Posicion_B'].fillna(999) # Si no existía, puesto 999
+    df_tendencia['Salto'] = df_tendencia['Posicion_B'] - df_tendencia['Posicion_A']
 
-    # --- 12. EXPLORADOR TÁCTICO POR DISCIPLINA ---
+    # Visualización Ranking Top 10
+    st.subheader(f"Top 10 Productos con Mayor Venta en {mes_actual}")
+    top_10 = df_tendencia.sort_values('Posicion_A').head(10).copy()
+    
+    def format_salto(val):
+        if val > 500: return "🆕 Nuevo"
+        if val > 0: return f"⬆️ +{int(val)}"
+        if val < 0: return f"⬇️ {int(val)}"
+        return "➡️ ="
+
+    top_10['Tendencia'] = top_10['Salto'].apply(format_salto)
+    st.dataframe(top_10[['Posicion_A', 'SKU', 'DESCRIPCION', 'CANT', 'Tendencia']].rename(columns={'Posicion_A': 'Puesto', 'CANT': 'Pares'}), use_container_width=True, hide_index=True)
+
+    # --- 10. EXPLORADOR POR DISCIPLINA ---
     st.divider()
     st.subheader("👟 Explorador Táctico por Disciplina")
-    disciplinas_disponibles = sorted(df_rank['DISCIPLINA'].unique())
-    disciplina_select = st.selectbox("Seleccioná una Disciplina para profundizar:", disciplinas_disponibles)
-    df_rank_dis = df_rank[df_rank['DISCIPLINA'] == disciplina_select].copy()
-    df_rank_dis['Pos_Categoría'] = df_rank_dis['CANT'].rank(ascending=False, method='min')
+    disciplina_foc = st.selectbox("Seleccione Disciplina para análisis profundo:", disciplinas_opts)
+    
+    df_dis_foc = df_tendencia[df_tendencia['DISCIPLINA'] == disciplina_foc].copy()
+    df_dis_foc['Posicion_Cat'] = df_dis_foc['CANT'].rank(ascending=False, method='min')
+    
+    col_dis1, col_dis2 = st.columns([2, 1])
+    with col_dis1:
+        st.write(f"**Top 10 en {disciplina_foc}:**")
+        df_dis_foc_show = df_dis_foc.sort_values('Posicion_Cat').head(10)
+        st.dataframe(df_dis_foc_show[['Posicion_Cat', 'SKU', 'DESCRIPCION', 'CANT']].rename(columns={'Posicion_Cat': 'Puesto Cat', 'CANT': 'Pares'}), use_container_width=True, hide_index=True)
+    with col_dis2:
+        st.metric(f"Venta Total {disciplina_foc}", f"{df_dis_foc['CANT'].sum():,.0f} prs")
+        fig_bar_dis = px.bar(df_dis_foc_show.head(5), x='CANT', y='SKU', orientation='h', title="Top 5 Volumen", color_discrete_sequence=[COLOR_MAP_DIS.get(disciplina_foc, '#000')])
+        st.plotly_chart(fig_bar_dis, use_container_width=True)
 
-    col_l1, col_l2 = st.columns([2, 1])
-    with col_l1:
-        st.markdown(f"**Top 10 de {disciplina_select}**")
-        df_dis_show = df_rank_dis.sort_values('Pos_Categoría').head(10).copy()
-        df_dis_show['Evolución'] = df_dis_show['Salto'].apply(lambda x: "🔥 Nuevo" if x > 500 else (f"🔼 +{int(x)}" if x > 0 else (f"🔽 {int(x)}" if x < 0 else "⏺️ =")))
-        st.dataframe(df_dis_show[['Pos_Categoría', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución']], use_container_width=True, hide_index=True)
-    with col_l2:
-        st.metric(f"Total {disciplina_select}", f"{df_rank_dis['CANT'].sum():,.0f}")
-        fig_mini = px.bar(df_dis_show.head(5), x='CANT', y='SKU', orientation='h', color_discrete_sequence=[COLOR_MAP_DIS.get(disciplina_select, '#0055A4')], text_auto='.2s')
-        fig_mini.update_layout(height=250, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
-        st.plotly_chart(fig_mini, use_container_width=True)
-
-    # --- 13. ALERTA DE QUIEBRE Y MOS ---
+    # --- 11. ALERTAS DE QUIEBRE Y COBERTURA (MOS) ---
     st.divider()
-    st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura Mensual (MOS)")
-    df_alerta = df_rank.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
-    df_alerta['Stock_Total'] = df_alerta['Stock Dass'] + df_alerta['Stock Cliente']
-    df_alerta['MOS_Proyectado'] = (df_alerta['Stock_Total'] / df_alerta['CANT']).replace([float('inf'), -float('inf')], 0).fillna(0)
+    st.header("🚨 Alerta de Quiebre y Cobertura (MOS)")
+    
+    # Unificar datos para MOS
+    stk_dass_group = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
+    df_alerta = df_tendencia.merge(stk_dass_group, on='SKU', how='left').fillna(0)
+    
+    # MOS Proyectado: Stock / Venta del mes actual
+    df_alerta['MOS_Proyectado'] = (df_alerta['Stock_Dass'] / df_alerta['CANT']).replace([float('inf'), -float('inf')], 0).fillna(0)
 
     def definir_semaforo_mensual(row):
-        if row['Salto'] >= 5 and row['MOS_Proyectado'] < 1.0 and row['CANT'] > 0: return '🔴 CRÍTICO: < 1 Mes'
-        elif row['Salto'] > 0 and row['MOS_Proyectado'] < 2.0 and row['CANT'] > 0: return '🟡 ADVERTENCIA: < 2 Meses'
-        else: return '🟢 OK: Stock Suficiente'
+        if row['Salto'] >= 5 and row['MOS_Proyectado'] < 1.0 and row['CANT'] > 0:
+            return '🔴 CRÍTICO: < 1 Mes'
+        elif row['Salto'] > 0 and row['MOS_Proyectado'] < 2.0 and row['CANT'] > 0:
+            return '🟡 ADVERTENCIA: < 2 Meses'
+        else:
+            return '🟢 OK: Stock Suficiente'
 
     df_alerta['Estado'] = df_alerta.apply(definir_semaforo_mensual, axis=1)
     df_riesgo = df_alerta[df_alerta['Estado'] != '🟢 OK: Stock Suficiente'].sort_values(['Salto', 'MOS_Proyectado'], ascending=[False, True])
@@ -254,13 +290,35 @@ if data:
         st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'DISCIPLINA', 'Salto', 'CANT', 'MOS_Proyectado']].rename(columns={'Salto': 'Puestos Subidos', 'CANT': 'Venta Mes', 'MOS_Proyectado': 'Meses Stock'}), use_container_width=True, hide_index=True)
         csv = df_riesgo.to_csv(index=False).encode('utf-8')
         st.download_button(label="📥 Descargar Lista de Reposición (CSV)", data=csv, file_name=f'reposicion_{mes_actual}.csv', mime='text/csv')
+    else:
+        st.success("✅ Cobertura mensual saludable para los productos en crecimiento.")
 
-    fig_mos = px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS_Proyectado', size='CANT', color='Estado', hover_name='DESCRIPCION', title="Mapa de Velocidad vs Cobertura (MOS)", color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745'})
-    fig_mos.add_hline(y=1.0, line_dash="dot", line_color="red", annotation_text="Peligro: < 1 Mes")
-    fig_mos.add_hline(y=2.0, line_dash="dot", line_color="orange", annotation_text="Alerta: < 2 Meses")
+    fig_mos = px.scatter(
+        df_alerta[df_alerta['CANT'] > 0], 
+        x='Salto', y='MOS_Proyectado', 
+        size='CANT', color='Estado', 
+        hover_name='DESCRIPCION',
+        title="Mapa de Velocidad vs Cobertura (MOS)",
+        color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745'}
+    )
     st.plotly_chart(fig_mos, use_container_width=True)
 
+    # --- 12. TABLA MAESTRA DETALLADA ---
+    st.divider()
+    st.subheader("📋 Detalle Maestro de Productos (Consolidado)")
+    
+    # Agrupamos SI e Ingresos para la tabla final
+    res_si = df_si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
+    res_ing = df_ing_f.groupby('SKU')['CANT'].sum().reset_index(name='Ingresos')
+    res_so = df_so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    res_stk = df_stk_snap.groupby('SKU')['CANT'].sum().reset_index(name='Stock_Total')
+
+    df_final = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(res_so, on='SKU', how='left')
+    df_final = df_final.merge(res_si, on='SKU', how='left')
+    df_final = df_final.merge(res_ing, on='SKU', how='left')
+    df_final = df_final.merge(res_stk, on='SKU', how='left').fillna(0)
+
+    st.dataframe(df_final.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
+
 else:
-    st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
-
-
+    st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
