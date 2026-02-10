@@ -146,67 +146,7 @@ if data:
     clientes_so = sorted(df_so_raw['CLIENTE_UP'].unique()) if not df_so_raw.empty else []
     clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
     f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
-# --- TÍTULO PRINCIPAL (Pégalo justo después de cerrar el bloque del sidebar) ---
-    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
-    # --- ASISTENTE IA EN LA BARRA LATERAL ---
-    st.sidebar.divider()
-    st.sidebar.subheader("🤖 Consultas Dass IA")
 
-    # Inicializamos la memoria para que no se borre al cambiar filtros
-    if 'resultado_lateral' not in st.session_state:
-        st.session_state.resultado_lateral = ""
-
-    # Todo este bloque va dentro del sidebar
-    with st.sidebar.expander("💬 Consultar a la IA", expanded=False):
-        with st.form("form_ia_sidebar"):
-            u_q = st.text_input("Pregunta sobre los datos:")
-            btn_preguntar = st.form_submit_button("Analizar")
-            
-            if btn_preguntar and u_q:
-                # Contexto rápido
-                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                ctx = f"Ventas Sell Out: {total_so:,.0f}."
-                
-                try:
-                    # Llamada a Gemini
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
-                        contents=f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}"
-                    )
-                    st.session_state.resultado_lateral = response.text
-                except Exception as e:
-                    st.error("Error de cuota. Reintenta en 1 min.")
-
-        # Mostramos la respuesta dentro del mismo expander
-        if st.session_state.resultado_lateral:
-            st.info(st.session_state.resultado_lateral)
-            if st.button("Limpiar"):
-                st.session_state.resultado_lateral = ""
-                st.rerun()
-        # --- ASISTENTE IA (RESET DE INDENTACIÓN) ---
-st.sidebar.divider()
-
-if 'df_so_f' in locals() or 'df_so_f' in globals():
-    with st.sidebar.expander("💬 Consultar a la IA", expanded=False):
-        with st.form("form_ia_sidebar"):
-            u_q = st.text_input("Pregunta sobre los datos:")
-            btn_preguntar = st.form_submit_button("Analizar")
-            
-            if btn_preguntar and u_q:
-                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                ctx = f"Ventas Sell Out: {total_so:,.0f}."
-                
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
-                        contents=f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}"
-                    )
-                    st.session_state.resultado_lateral = response.text
-                except Exception as e:
-                    st.error("Error de cuota. Reintenta en 1 min.")
-
-        if st.session_state.get('resultado_lateral'):
-            st.info(st.session_state.resultado_lateral)
     # --- 6. APLICACIÓN DE LÓGICA DE FILTROS ---
     def filtrar_dataframe(df, filtrar_mes=True):
         if df.empty: return df
@@ -225,14 +165,24 @@ if 'df_so_f' in locals() or 'df_so_f' in globals():
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-# --- 7. IA BAJO DEMANDA (Cero consumo automático) ---
+# --- 7. IA Y DASHBOARD ---
+    with st.expander("🤖 Asistente Estratégico Dass", expanded=True):
+        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
+        if u_q and "GEMINI_API_KEY" in st.secrets:
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+            with st.spinner("🧠 Analizando..."):
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-2.0-flash-lite",
+                        contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                    )
+                    st.info(f"**Análisis:** {response.text}")
+                except Exception as e:
+                    if "429" in str(e):
+                        st.warning("⏳ Límite de cuota alcanzado. Espera 60 segundos.")
+                    else:
+                        st.error(f"Error: {e}")
     st.divider()
-    
-    # Usamos session_state para que el resultado no se borre al filtrar otros datos
-    if 'resultado_estratégico' not in st.session_state:
-        st.session_state.resultado_estratégico = ""
-
-    
 
     # --- KPIs PRINCIPALES ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -391,18 +341,6 @@ if 'df_so_f' in locals() or 'df_so_f' in globals():
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
