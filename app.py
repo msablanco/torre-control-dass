@@ -16,11 +16,7 @@ if "GEMINI_API_KEY" in st.secrets:
        model = genai.GenerativeModel('models/gemini-1.5-flash')
     except Exception as e:
         st.error(f"Error al configurar Gemini: {e}")
-try:
-    available_models = [m.name for m in genai.list_models()]
-    st.write("Modelos disponibles detectados:", available_models)
-except Exception as e:
-    st.write("No se pudo listar modelos:", e)
+
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
 
@@ -347,6 +343,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
