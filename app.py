@@ -16,7 +16,7 @@ if "GEMINI_API_KEY" in st.secrets:
             api_key=st.secrets["GEMINI_API_KEY"],
             http_options={'api_version': 'v1'} 
         )
-        model_id = "gemini-2.0-flash"
+        model_id = "gemini-2.0-flash-lite"
     except Exception as e:
         st.error(f"Error de configuración: {e}")
 
@@ -361,6 +361,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
