@@ -166,33 +166,20 @@ if data:
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
 # --- 7. IA Y DASHBOARD ---
-    st.divider()
-    st.subheader("🤖 Asistente Estratégico Dass")
-
-    # Contenedor para la IA
-    with st.expander("Haz una consulta sobre tus datos", expanded=True):
-        u_q = st.chat_input("Ej: ¿Cómo vienen las ventas de este mes vs el anterior?")
-        
-        if u_q:
-            # Preparamos un resumen de datos para que la IA sepa de qué hablamos
-            # Ajusta los nombres de las columnas si son distintos en tu Excel
-            resumen_ventas = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-            ctx = f"Ventas actuales (Sell Out): {resumen_ventas} unidades."
-            
+    with st.expander("🤖 Asistente Estratégico Dass", expanded=True):
+        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
+        if u_q and "GEMINI_API_KEY" in st.secrets:
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             with st.spinner("🧠 Analizando..."):
-               try:
-                    # Usamos el nombre técnico completo que la API v1 reconoce
+                try:
                     response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite", 
+                        model="gemini-2.0-flash-lite",
                         contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                     )
-                    st.markdown(f"**Análisis de Gemini:**")
-                    st.info(response.text)
+                    st.info(f"**Análisis:** {response.text}")
                 except Exception as e:
-                    if "404" in str(e):
-                        st.error("❌ Error de versión: El modelo no fue encontrado. Intentando reconectar...")
-                    elif "429" in str(e):
-                        st.warning("⏳ Límite alcanzado. Espera 60 segundos.")
+                    if "429" in str(e):
+                        st.warning("⏳ Límite de cuota alcanzado. Espera 60 segundos.")
                     else:
                         st.error(f"Error: {e}")
     st.divider()
@@ -354,6 +341,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
