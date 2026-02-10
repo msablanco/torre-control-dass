@@ -1,7 +1,6 @@
 streamlit
 pandas
-google-generativeai>=0.7.2
+google-genai
 google-api-python-client
 google-auth
 plotly
-
