@@ -297,11 +297,17 @@ if data:
     # --- 12. TABLA MAESTRA FINAL ---
     st.divider()
     st.subheader("📋 Detalle Maestro Consolidado")
-    res_so = df_so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
-    df_final = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(res_so, on='SKU', how='left').fillna(0)
+    
+    # Agrupamos datos para la tabla final
+    res_so_final = df_so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    df_final = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(res_so_final, on='SKU', how='left').fillna(0)
+    
     st.dataframe(df_final.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
-        else:
-    st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
+# --- FUERA DE TODO BLOQUE ---
+# Si no hay datos, mostramos el error sin usar un 'else' que cause problemas de sangría
+if not data:
+    st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive o los Secrets.")
 
     # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
@@ -450,6 +456,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
