@@ -165,24 +165,45 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-# --- 7. IA Y DASHBOARD ---
-    with st.expander("🤖 Asistente Estratégico Dass", expanded=True):
-        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
-        if u_q and "GEMINI_API_KEY" in st.secrets:
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-            with st.spinner("🧠 Analizando..."):
+# --- 7. IA Y DASHBOARD (MODO BAJO CONSUMO) ---
+    st.divider()
+    st.subheader("🤖 Consultas Estratégicas")
+
+    # 1. Inicializamos la memoria de la respuesta si no existe
+    if 'respuesta_ia' not in st.session_state:
+        st.session_state.respuesta_ia = ""
+
+    with st.expander("Abrir Asistente de IA", expanded=True):
+        # 2. El chat_input solo devuelve un valor en el momento exacto que presionas Enter
+        pregunta_usuario = st.chat_input("Haz una pregunta sobre los datos...")
+        
+        if pregunta_usuario:
+            # Preparamos el contexto solo si hay pregunta
+            total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
+            total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
+            contexto = f"Ventas (Sell Out): {total_so}. Ingresos (Sell In): {total_si}."
+            
+            with st.spinner("🧠 Procesando consulta..."):
                 try:
+                    # 3. LLAMADA ÚNICA A LA API
                     response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
-                        contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                        model="gemini-2.0-flash-lite", 
+                        contents=f"Eres analista Dass. Contexto: {contexto}. Pregunta: {pregunta_usuario}"
                     )
-                    st.info(f"**Análisis:** {response.text}")
+                    # 4. Guardamos el resultado en la memoria de la sesión
+                    st.session_state.respuesta_ia = response.text
                 except Exception as e:
                     if "429" in str(e):
-                        st.warning("⏳ Límite de cuota alcanzado. Espera 60 segundos.")
+                        st.error("⏳ Agotaste la cuota. Espera 1 minuto antes de preguntar de nuevo.")
                     else:
                         st.error(f"Error: {e}")
-    st.divider()
+
+        # 5. Si hay una respuesta guardada, la mostramos siempre (aunque muevas filtros)
+        if st.session_state.respuesta_ia:
+            st.info(f"**Respuesta:** {st.session_state.respuesta_ia}")
+            if st.button("Limpiar Chat"):
+                st.session_state.respuesta_ia = ""
+                st.rerun()
 
     # --- KPIs PRINCIPALES ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -341,6 +362,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
