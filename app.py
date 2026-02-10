@@ -155,7 +155,7 @@ k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
 k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
-    k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
 st.divider()
@@ -241,6 +241,7 @@ kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
