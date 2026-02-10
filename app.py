@@ -173,29 +173,34 @@ if data:
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico (Gemini 2.0)", expanded=True):
-        u_q = st.chat_input("Escribe tu consulta aquí...")
+        # El chat_input ya funciona como un disparador (trigger)
+        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
         
-        # Agregamos un botón para confirmar la ejecución y cuidar la cuota
         if u_q:
-            if st.button("🚀 Analizar con IA"):
-                if "GEMINI_API_KEY" in st.secrets:
-                    # Contexto de datos
-                    ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-                    
+            if "GEMINI_API_KEY" in st.secrets:
+                # Contexto de datos resumido
+                ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+                
+                # st.status o st.spinner muestran que la IA está pensando
+                with st.spinner("🧠 Analizando datos de Dass..."):
                     try:
-                        # Usamos gemini-2.0-flash-lite (El que vimos en tu lista)
+                        # Llamada directa al modelo Lite
                         response = client.models.generate_content(
                             model="gemini-2.0-flash-lite", 
                             contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                         )
-                        st.info(f"**Análisis:** {response.text}")
+                        
+                        # Mostramos el resultado de forma destacada
+                        st.markdown(f"### 💡 Análisis para: '{u_q}'")
+                        st.info(response.text)
+                        
                     except Exception as e:
                         if "429" in str(e):
-                            st.warning("⚠️ Límites de Google alcanzados. Espera 30 segundos y reintenta.")
+                            st.warning("⚠️ Google está saturado. Espera 15 segundos y presiona Enter de nuevo.")
                         else:
                             st.error(f"Error de conexión: {e}")
-                else:
-                    st.error("No se encontró la GEMINI_API_KEY en Secrets.")
+            else:
+                st.error("Falta la GEMINI_API_KEY en los Secrets de Streamlit.")
 
     st.divider()
 
@@ -356,6 +361,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
