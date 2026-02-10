@@ -168,17 +168,17 @@ if data:
    # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
+   with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto de datos reales del script para la IA
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
+            # Contexto resumido
+            ctx = f"Venta: {df_so_f['CANT'].sum():.0f}. Stock: {df_stk_snap['CANT'].sum():.0f}."
             try:
-                # LLAMADA REAL A GEMINI
-                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
+                # Forzamos la generación simple
+                resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
-                st.error(f"Error de conexión con IA: {e}")
+                st.error(f"Error de conexión: {e}")
 
     st.divider() # Esta línea ahora está alineada correctamente con 'with'
 
@@ -337,6 +337,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
