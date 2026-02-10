@@ -10,8 +10,9 @@ import google.generativeai as genai
 
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["AIzaSyBnW0AfykTNvb--3p8FBURZPhAPZ_A7E2w"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # Cambiamos a 'gemini-1.5-flash-latest' que tiene mayor compatibilidad
+    model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -336,5 +337,6 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
