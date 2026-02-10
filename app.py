@@ -165,37 +165,50 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-# --- 7. IA Y DASHBOARD ---
-    with st.expander("🤖 Asistente Estratégico Dass", expanded=True):
-        u_q = st.chat_input("Escribe tu consulta y presiona Enter...")
-        if u_q and "GEMINI_API_KEY" in st.secrets:
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-            with st.spinner("🧠 Analizando..."):
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-2.0-flash-lite",
-                        contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
-                    )
-                    st.info(f"**Análisis:** {response.text}")
-                except Exception as e:
-                    if "429" in str(e):
-                        st.warning("⏳ Límite de cuota alcanzado. Espera 60 segundos.")
-                    else:
-                        st.error(f"Error: {e}")
-    st.divider()
+# --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR (BAJO DEMANDA) ---
+    st.sidebar.divider()
+    st.sidebar.subheader("🤖 Consultas Dass IA")
 
-    # --- KPIs PRINCIPALES ---
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-    kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-    kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
-    
-    # Cálculo de stock basado en el snapshot
-    if not df_stk_snap.empty:
-        stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
-    else:
-        stock_dass = 0
-    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+    # Inicializamos la memoria de la IA para que la respuesta sea persistente
+    if 'respuesta_ia' not in st.session_state:
+        st.session_state.respuesta_ia = ""
+
+    # Usamos un formulario para "congelar" la ejecución de la IA
+    with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
+        with st.form("asistente_ia_form"):
+            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
+            boton_enviar = st.form_submit_button("🚀 Analizar")
+            
+            # La IA SOLO se activa si presionas el botón
+            if boton_enviar and pregunta_usuario:
+                # Preparamos un contexto resumido para ahorrar tokens
+                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
+                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
+                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
+                
+                with st.spinner("🧠 Pensando..."):
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash-lite",
+                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
+                        )
+                        # Guardamos en el estado de sesión
+                        st.session_state.respuesta_ia = response.text
+                    except Exception as e:
+                        if "429" in str(e):
+                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
+                        else:
+                            st.error(f"Error: {e}")
+
+        # Mostramos la respuesta guardada (esto no gasta tokens)
+        if st.session_state.respuesta_ia:
+            st.info(st.session_state.respuesta_ia)
+            if st.button("🗑️ Limpiar Chat"):
+                st.session_state.respuesta_ia = ""
+                st.rerun()
+
+    # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
+    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
     col_mix1, col_mix2, col_mix3 = st.columns([1, 1, 2])
@@ -341,6 +354,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
