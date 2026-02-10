@@ -10,7 +10,7 @@ import google.generativeai as genai
 
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    genai.configure(api_key=st.secrets["AIzaSyBnW0AfykTNvb--3p8FBURZPhAPZ_A7E2w"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -336,4 +336,5 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
