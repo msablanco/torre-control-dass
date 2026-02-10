@@ -207,37 +207,7 @@ if data:
     if 'resultado_estratégico' not in st.session_state:
         st.session_state.resultado_estratégico = ""
 
-    with st.expander("🤖 Abrir Asistente de IA (Activación Manual)", expanded=True):
-        # El st.form asegura que NADA ocurra hasta que presiones el botón
-        with st.form("validador_ia"):
-            u_q = st.text_input("Haz tu pregunta técnica aquí:")
-            enviado = st.form_submit_button("🚀 Ejecutar Análisis")
-            
-            if enviado and u_q:
-                # Solo aquí dentro se consume cuota de Gemini
-                ctx = f"SO actual: {df_so_f['CANT'].sum():.0f} unidades."
-                
-                with st.spinner("🧠 Conectando con Gemini 2.0..."):
-                    try:
-                        response = client.models.generate_content(
-                            model="gemini-2.0-flash-lite",
-                            contents=f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}"
-                        )
-                        st.session_state.resultado_estratégico = response.text
-                    except Exception as e:
-                        if "429" in str(e):
-                            st.error("⏳ Google bloqueó la conexión por exceso de velocidad. Espera 60 segundos.")
-                        else:
-                            st.error(f"Error: {e}")
-
-        # La respuesta se muestra fuera del formulario para que sea persistente
-        if st.session_state.resultado_estratégico:
-            st.markdown("### 💡 Resultado del Análisis")
-            st.info(st.session_state.resultado_estratégico)
-            
-            if st.button("🗑️ Limpiar consulta"):
-                st.session_state.resultado_estratégico = ""
-                st.rerun()
+    
 
     # --- KPIs PRINCIPALES ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -396,6 +366,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
