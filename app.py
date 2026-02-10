@@ -6,16 +6,16 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-import google.generativeai as genai
+from google import genai  # Nueva forma de importar
 
-# --- CONFIGURACIÓN IA (GEMINI) ---
+# --- CONFIGURACIÓN IA (NUEVA SDK) ---
 if "GEMINI_API_KEY" in st.secrets:
     try:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Con la librería actualizada, este nombre ya no dará 404
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # Ahora se crea un cliente
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        model_id = "gemini-1.5-flash" 
     except Exception as e:
-        st.error(f"Error al configurar Gemini: {e}")
+        st.error(f"Error de configuración: {e}")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -174,15 +174,16 @@ if data:
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto de datos
             ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             try:
-                # Llamada limpia
-                resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
-                st.info(f"**Análisis IA:** {resp.text}")
+                # Nueva sintaxis: client.models.generate_content
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                )
+                st.info(f"**Análisis IA:** {response.text}")
             except Exception as e:
-                # Si esto falla ahora, te mostrará un error de cuota o de API Key, no de conexión
-                st.error(f"Aviso: {e}")
+                st.error(f"Error con la nueva SDK: {e}")
 
     st.divider()
 
@@ -343,6 +344,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
