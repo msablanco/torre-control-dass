@@ -174,7 +174,7 @@ if data:
 # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-   with st.expander("🔍 Verificación de Modelos Disponibles"):
+    with st.expander("🔍 Verificación de Modelos Disponibles"):
     try:
         # Listamos los modelos que tu llave REALMENTE puede ver
         for m in client.models.list():
@@ -341,6 +341,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
