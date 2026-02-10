@@ -1,5 +1,11 @@
 import streamlit as st
 import pandas as pd
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+import io
+import plotly.graph_objects as go
+import plotly.express as px
 from google import genai  # Importante: la nueva librería
 
 # --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
@@ -344,6 +350,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
