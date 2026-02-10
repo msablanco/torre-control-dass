@@ -171,24 +171,28 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-    # --- 7. IA Y DASHBOARD ---
+  # --- 7. IA Y DASHBOARD ---
+    # Asegúrate de que este bloque esté alineado con el resto de tu código principal
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto resumido para ahorrar cuota (tokens)
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+            # Resumen de datos para el contexto
+            total_so = df_so_f['CANT'].sum()
+            total_si = df_si_f['CANT'].sum()
+            ctx = f"SO: {total_so:.0f}. SI: {total_si:.0f}."
             
             try:
-                # Usamos el modelo LITE para evitar el error 429 de cuota
+                # Usamos el modelo que detectamos en el diagnóstico
                 response = client.models.generate_content(
                     model="gemini-2.0-flash-lite", 
                     contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                 )
                 st.info(f"**Análisis IA:** {response.text}")
             except Exception as e:
+                # Manejo del error de cuota (429) que vimos antes
                 if "429" in str(e):
                     st.warning("⚠️ Google está procesando muchas consultas. Espera 30 segundos y presiona Enter de nuevo.")
                 else:
@@ -196,13 +200,13 @@ if data:
 
     st.divider()
 
-    # KPIs Principales (Alineados con 4 espacios)
+    # --- KPIs PRINCIPALES ---
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
     kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
-    # Cálculo de stock consolidado
+    # Cálculo de stock basado en el snapshot
     if not df_stk_snap.empty:
         stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
     else:
@@ -353,6 +357,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
