@@ -11,7 +11,7 @@ import google.generativeai as genai
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Usamos este nombre que es el más compatible actualmente
+    # Usamos este nombre exacto para evitar el error 404
     model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -165,24 +165,24 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-   # --- 7. IA Y DASHBOARD ---
+    # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto de datos
+            # Contexto simplificado para evitar errores de carga
             ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             try:
-                # LLAMADA REAL
-                resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
+                # LLAMADA REAL A LA IA
+                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Responde breve: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
                 st.error(f"Error de conexión: {e}")
 
     st.divider()
 
-    # KPIs Principales
+    # KPIs Principales (Asegúrate de que 'kpi1' esté justo debajo de 'st.divider')
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
@@ -336,6 +336,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
