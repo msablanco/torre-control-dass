@@ -164,7 +164,7 @@ kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
 kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
-   st.divider()
+    st.divider()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
     with col_m1:
         if not df_so_f.empty:
@@ -237,6 +237,7 @@ kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
