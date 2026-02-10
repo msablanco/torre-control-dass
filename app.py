@@ -193,8 +193,9 @@ if data:
         if u_q and "GEMINI_API_KEY" in st.secrets:
             ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             try:
+                # Usamos uno de los modelos que SÍ detectó tu diagnóstico
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-2.0-flash", 
                     contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
                 )
                 st.info(f"**Análisis IA:** {response.text}")
@@ -360,6 +361,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
