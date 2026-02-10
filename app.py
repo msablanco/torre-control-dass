@@ -11,12 +11,12 @@ import google.generativeai as genai
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
 
-# --- CONFIGURACIÓN DE IA (GEMINI) ---
+# --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     model = genai.GenerativeModel('gemini-1.5-flash')
 else:
-    st.warning("⚠️ Configura GEMINI_API_KEY en los Secrets de Streamlit para activar la IA.")
+    st.warning("⚠️ Configura GEMINI_API_KEY en Secrets.")
 
 
 # --- 2. CONFIGURACIÓN VISUAL (MAPAS DE COLORES) ---
@@ -132,37 +132,30 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw)
 
-    # --- 7. IA Y DASHBOARD ---
-st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+# --- 7. IA Y DASHBOARD ---
+    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=True):
-    user_question = st.chat_input("Escribe tu consulta (ej: ¿Cómo vienen las ventas vs ingresos?)")
+    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
+        u_q = st.chat_input("Consulta sobre ingresos, ventas o quiebres...")
+        if u_q and "GEMINI_API_KEY" in st.secrets:
+            # Contexto de datos para la IA
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingresos: {df_ing_f['CANT'].sum():.0f}."
+            try:
+                resp = model.generate_content(f"Eres analista de Dass. Datos actuales: {ctx}. Responde breve: {u_q}")
+                st.info(f"**Análisis IA:** {resp.text}")
+            except Exception as e:
+                st.error("Error en conexión con IA.")
+
+    # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
+    st.divider()
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+    kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+    kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
-    if user_question:
-        # Preparamos un resumen de datos para que la IA tenga contexto
-        resumen_contexto = f"""
-        Contexto actual del Dashboard:
-        - Ventas Sell Out Totales: {df_so_f['CANT'].sum():,.0f} pares.
-        - Facturación Sell In Totales: {df_si_f['CANT'].sum():,.0f} pares.
-        - Ingresos a Depósito: {df_ing_f['CANT'].sum():,.0f} pares.
-        - Stock actual en Dass: {stock_dass:,.0f} pares.
-        - Mes de análisis: {mes_filtro}.
-        """
-        
-        try:
-            # La IA genera la respuesta usando el contexto y la pregunta del usuario
-            response = model.generate_content(f"Eres un analista experto en retail. Basado en estos datos: {resumen_contexto}. Responde de forma breve: {user_question}")
-            st.markdown(f"**Análisis de la IA:** {response.text}")
-        except Exception as e:
-            st.error(f"Error al procesar con IA: {e}")
-
-# Mantén tus KPIs debajo:
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
-kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
-
+    stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
+    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
@@ -237,6 +230,7 @@ kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
