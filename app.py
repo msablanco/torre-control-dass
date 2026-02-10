@@ -171,16 +171,43 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-# --- 7. IA Y DASHBOARD ---
+Este error ocurre porque en Python, después de una sentencia que termina en dos puntos (como with), la siguiente línea debe tener un nivel extra de sangría (normalmente 4 espacios o un Tab).
+
+Para solucionar esto y de paso arreglar el problema de la conexión 404, vamos a limpiar el código. Por favor, borra todo el bloque de la Sección 7 y pega exactamente esto. Me aseguré de que los espacios sean los correctos:
+
+Python
+    # --- 7. DIAGNÓSTICO Y IA ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
+    # Bloque de Diagnóstico (Alineado correctamente)
     with st.expander("🔍 Verificación de Modelos Disponibles"):
-    try:
-        # Listamos los modelos que tu llave REALMENTE puede ver
-        for m in client.models.list():
-            st.write(f"Modelo: `{m.name}` - Soporta: `{m.supported_methods}`")
-    except Exception as e:
-        st.error(f"No se pueden listar los modelos: {e}")
+        try:
+            # Listamos modelos para ver cuáles acepta tu API Key
+            modelos_detectados = []
+            for m in client.models.list():
+                modelos_detectados.append(m.name)
+                st.write(f"✅ Modelo detectado: `{m.name}`")
+            
+            if not modelos_detectados:
+                st.warning("No se detectaron modelos disponibles. Revisa los permisos de tu API Key.")
+        except Exception as e:
+            st.error(f"Error al listar modelos: {e}")
+
+    # Bloque del Asistente
+    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
+        u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
+        if u_q and "GEMINI_API_KEY" in st.secrets:
+            # Contexto resumido
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+            try:
+                # Usamos client.models.generate_content (Sintaxis 2026)
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                )
+                st.info(f"**Análisis IA:** {response.text}")
+            except Exception as e:
+                st.error(f"Error de respuesta: {e}")
 
     st.divider()
 
@@ -341,6 +368,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
