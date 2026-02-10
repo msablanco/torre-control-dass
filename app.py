@@ -12,10 +12,10 @@ import google.generativeai as genai
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Usamos el nombre base. El SDK elegirá la versión v1 o v1beta automáticamente
-        model = genai.GenerativeModel('gemini-pro')
+        # Con la librería actualizada, este nombre ya no dará 404
+        model = genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        st.error(f"Error de configuración: {e}")
+        st.error(f"Error al configurar Gemini: {e}")
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
 
@@ -167,24 +167,25 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
- # --- 7. IA Y DASHBOARD ---
+# --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto derivado de tus variables filtradas
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
+            # Contexto de datos
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             try:
-                # Generación de contenido
-                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
+                # Llamada limpia
+                resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
-                st.error(f"Error de conexión con IA: {e}")
+                # Si esto falla ahora, te mostrará un error de cuota o de API Key, no de conexión
+                st.error(f"Aviso: {e}")
 
     st.divider()
 
-    # KPIs Principales
+    # KPIs Principales (Alineados con 4 espacios)
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
@@ -341,6 +342,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
