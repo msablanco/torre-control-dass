@@ -11,8 +11,8 @@ import google.generativeai as genai
 # --- CONFIGURACIÓN IA (GEMINI) ---
 if "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Usamos 'gemini-pro' que es el nombre más estable para evitar el 404
-    model = genai.GenerativeModel('gemini-pro')
+    # Usamos este nombre que es el más compatible actualmente
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -166,14 +166,15 @@ if data:
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
    # --- 7. IA Y DASHBOARD ---
-   st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            ctx = f"Venta: {df_so_f['CANT'].sum():.0f}. Stock: {df_stk_snap['CANT'].sum():.0f}."
+            # Contexto de datos
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
             try:
-                # El modelo 'gemini-pro' suele resolver el error 404
+                # LLAMADA REAL
                 resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
@@ -181,7 +182,7 @@ if data:
 
     st.divider()
 
-    # KPIs Principales - Todos alineados a la misma altura (4 espacios)
+    # KPIs Principales
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
@@ -190,7 +191,6 @@ if data:
     # Cálculo de stock consolidado
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
-
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
     col_mix1, col_mix2, col_mix3 = st.columns([1, 1, 2])
@@ -336,6 +336,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
