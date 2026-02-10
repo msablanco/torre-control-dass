@@ -12,7 +12,7 @@ import plotly.express as px
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Intentamos inicializar el modelo directamente
+        # Usamos el nombre base para que la librería elija la mejor ruta
         model = genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
         st.error(f"Error al configurar Gemini: {e}")
@@ -174,18 +174,18 @@ if data:
     with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
         u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto simplificado para evitar errores de carga
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+            # Contexto simplificado
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
             try:
-                # LLAMADA REAL A LA IA
-                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Responde breve: {u_q}")
+                # LLAMADA REAL
+                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
-                st.error(f"Error de conexión: {e}")
+                st.error(f"Error de conexión con IA: {e}")
 
     st.divider()
 
-    # KPIs Principales (Asegúrate de que 'kpi1' esté justo debajo de 'st.divider')
+    # KPIs Principales (Alineación corregida)
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     kpi2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
@@ -339,6 +339,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
