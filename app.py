@@ -174,7 +174,7 @@ if data:
             # Contexto resumido
             ctx = f"Venta: {df_so_f['CANT'].sum():.0f}. Stock: {df_stk_snap['CANT'].sum():.0f}."
             try:
-                # Forzamos la generación simple
+               # Forzamos la generación simple
                 resp = model.generate_content(f"Analista Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
@@ -337,6 +337,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
