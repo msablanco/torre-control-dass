@@ -6,11 +6,17 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-from openai import OpenAI
+from google import genai
 
-# --- CONFIGURACIÓN OPENAI ---
-if "OPENAI_API_KEY" in st.secrets:
-    client_oa = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# --- CONFIGURACIÓN IA (GEMINI 2026) ---
+if "GEMINI_API_KEY" in st.secrets:
+    try:
+        client = genai.Client(
+            api_key=st.secrets["GEMINI_API_KEY"],
+            http_options={'api_version': 'v1'} # Forzamos v1 para evitar el error 404
+        )
+    except Exception as e:
+        st.error(f"Error al configurar la IA: {e}")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -163,27 +169,33 @@ if data:
     df_si_f = filtrar_dataframe(df_si_raw)
     df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
 
-  # --- 7. IA Y DASHBOARD ---
-    # Asegúrate de que este bloque esté alineado con el resto de tu código principal
+# --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente ChatGPT", expanded=True):
-        u_q = st.chat_input("Consulta tendencias con ChatGPT...")
+    with st.expander("🤖 IA - Asistente Estratégico (Gemini 2.0)", expanded=True):
+        u_q = st.chat_input("Escribe tu consulta aquí...")
         
-        if u_q and "OPENAI_API_KEY" in st.secrets:
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-            
-            try:
-                response = client_oa.chat.completions.create(
-                    model="gpt-4o-mini",  # Modelo rápido y económico
-                    messages=[
-                        {"role": "system", "content": "Eres un analista experto de la empresa Dass."},
-                        {"role": "user", "content": f"Datos: {ctx}. Pregunta: {u_q}"}
-                    ]
-                )
-                st.info(f"**Análisis GPT:** {response.choices[0].message.content}")
-            except Exception as e:
-                st.error(f"Error con OpenAI: {e}")
+        # Agregamos un botón para confirmar la ejecución y cuidar la cuota
+        if u_q:
+            if st.button("🚀 Analizar con IA"):
+                if "GEMINI_API_KEY" in st.secrets:
+                    # Contexto de datos
+                    ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
+                    
+                    try:
+                        # Usamos gemini-2.0-flash-lite (El que vimos en tu lista)
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash-lite", 
+                            contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
+                        )
+                        st.info(f"**Análisis:** {response.text}")
+                    except Exception as e:
+                        if "429" in str(e):
+                            st.warning("⚠️ Límites de Google alcanzados. Espera 30 segundos y reintenta.")
+                        else:
+                            st.error(f"Error de conexión: {e}")
+                else:
+                    st.error("No se encontró la GEMINI_API_KEY en Secrets.")
 
     st.divider()
 
@@ -344,6 +356,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
