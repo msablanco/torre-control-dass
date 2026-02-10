@@ -8,12 +8,15 @@ import plotly.graph_objects as go
 import plotly.express as px
 from google import genai  # Nueva forma de importar
 
-# --- CONFIGURACIÓN IA (NUEVA SDK) ---
+# --- CONFIGURACIÓN IA (VERSIÓN FORZADA) ---
 if "GEMINI_API_KEY" in st.secrets:
     try:
-        # Ahora se crea un cliente
-        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        model_id = "gemini-1.5-flash" 
+        # Añadimos el parámetro http_options para forzar la API estable v1
+        client = genai.Client(
+            api_key=st.secrets["GEMINI_API_KEY"],
+            http_options={'api_version': 'v1'} 
+        )
+        model_id = "gemini-1.5-flash"
     except Exception as e:
         st.error(f"Error de configuración: {e}")
 
@@ -171,19 +174,13 @@ if data:
 # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
-        u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
-        if u_q and "GEMINI_API_KEY" in st.secrets:
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}."
-            try:
-                # Nueva sintaxis: client.models.generate_content
-                response = client.models.generate_content(
-                    model=model_id,
-                    contents=f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}"
-                )
-                st.info(f"**Análisis IA:** {response.text}")
-            except Exception as e:
-                st.error(f"Error con la nueva SDK: {e}")
+   with st.expander("🔍 Verificación de Modelos Disponibles"):
+    try:
+        # Listamos los modelos que tu llave REALMENTE puede ver
+        for m in client.models.list():
+            st.write(f"Modelo: `{m.name}` - Soporta: `{m.supported_methods}`")
+    except Exception as e:
+        st.error(f"No se pueden listar los modelos: {e}")
 
     st.divider()
 
@@ -344,6 +341,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
