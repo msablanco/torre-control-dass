@@ -169,43 +169,140 @@ if data:
     st.sidebar.divider()
     st.sidebar.subheader("🤖 Consultas Dass IA")
 
-    # Inicializamos la memoria de la IA para que la respuesta sea persistente
     if 'respuesta_ia' not in st.session_state:
         st.session_state.respuesta_ia = ""
 
-    # Usamos un formulario para "congelar" la ejecución de la IA
     with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
         with st.form("asistente_ia_form"):
-            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
+            u_q = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cómo vienen las ventas?")
             boton_enviar = st.form_submit_button("🚀 Analizar")
             
-            # La IA SOLO se activa si presionas el botón
-            if boton_enviar and pregunta_usuario:
-                # Preparamos un contexto resumido para ahorrar tokens
+            if boton_enviar and u_q:
                 total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
-                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
+                contexto = f"Sell Out: {total_so:,.0f} prs. Mes: {mes_filtro}."
                 
                 with st.spinner("🧠 Pensando..."):
                     try:
                         response = client.models.generate_content(
                             model="gemini-2.0-flash-lite",
-                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
+                            contents=f"Eres analista de Dass. Datos: {contexto}. Pregunta: {u_q}"
                         )
-                        # Guardamos en el estado de sesión
                         st.session_state.respuesta_ia = response.text
                     except Exception as e:
-                        if "429" in str(e):
-                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
-                        else:
-                            st.error(f"Error: {e}")
+                        st.error(f"Error: {e}")
 
-        # Mostramos la respuesta guardada (esto no gasta tokens)
         if st.session_state.respuesta_ia:
             st.info(st.session_state.respuesta_ia)
-            if st.button("🗑️ Limpiar Chat"):
+            if st.sidebar.button("🗑️ Limpiar Chat"):
                 st.session_state.respuesta_ia = ""
                 st.rerun()
+
+    # --- 8. PANEL CENTRAL: TÍTULO Y KPIs ---
+    st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+    
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    total_so_val = df_so_f['CANT'].sum()
+    total_si_val = df_si_f['CANT'].sum()
+    total_ing_val = df_ing_f['CANT'].sum()
+    
+    # Cálculo de stock basado en el snapshot para el KPI
+    stock_dass = 0
+    if not df_stk_snap.empty:
+        stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
+
+    kpi1.metric("Sell Out (Pares)", f"{total_so_val:,.0f}")
+    kpi2.metric("Sell In (Pares)", f"{total_si_val:,.0f}")
+    kpi3.metric("Ingresos 2025", f"{total_ing_val:,.0f}")
+    kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
+
+    # --- 9. GRÁFICOS DE TORTA Y EVOLUCIÓN (REUPERADOS) ---
+    st.divider()
+    col_mix1, col_mix2, col_mix3 = st.columns([1, 1, 2])
+
+    with col_mix1:
+        if not df_so_f.empty:
+            mix_so = df_so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index()
+            fig_mix_so = px.pie(mix_so, values='CANT', names='DISCIPLINA', title="Mix Sell Out", 
+                               color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            st.plotly_chart(fig_mix_so, use_container_width=True)
+
+    with col_mix2:
+        if not df_stk_snap.empty:
+            mix_stk = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
+            fig_mix_stk = px.pie(mix_stk, values='CANT', names='DISCIPLINA', title="Mix Stock Depósito", 
+                                color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            st.plotly_chart(fig_mix_stk, use_container_width=True)
+
+    with col_mix3:
+        # Evolución Histórica
+        evol_so = filtrar_dataframe(df_so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
+        evol_si = filtrar_dataframe(df_si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell In')
+        evol_ing = filtrar_dataframe(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Ingresos')
+        
+        evol_total = evol_so.merge(evol_si, on='MES', how='outer').merge(evol_ing, on='MES', how='outer').fillna(0).sort_values('MES')
+        
+        fig_evol = go.Figure()
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Ingresos'], name='Ingresos', line=dict(color='#A9A9A9', width=2, dash='dot')))
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3)))
+        fig_evol.update_layout(title="Flujo Logístico: Ingresos vs Sell In vs Sell Out", hovermode='x unified')
+        st.plotly_chart(fig_evol, use_container_width=True)
+
+    # --- 10. RANKINGS Y TENDENCIAS (REUPERADOS) ---
+    st.divider()
+    st.header("🏆 Inteligencia de Rankings")
+    
+    # Lógica de Ranking para Tendencias
+    if not df_so_raw.empty and len(meses_disponibles) >= 2:
+        col_sel1, col_sel2 = st.columns(2)
+        with col_sel1:
+            m_a = st.selectbox("Mes Actual (A)", meses_disponibles, index=0, key='ma')
+        with col_sel2:
+            m_b = st.selectbox("Mes Anterior (B)", meses_disponibles, index=1, key='mb')
+
+        def obtener_ranking(mes):
+            df_mes = df_so_raw[df_so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index()
+            df_mes['Posicion'] = df_mes['CANT'].rank(ascending=False, method='min')
+            return df_mes
+
+        rk_a = obtener_ranking(m_a)
+        rk_b = obtener_ranking(m_b)
+
+        df_tendencia = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Posicion', 'CANT']], on='SKU', how='inner')
+        df_tendencia = df_tendencia.merge(rk_b[['SKU', 'Posicion']], on='SKU', how='left', suffixes=('_A', '_B'))
+        df_tendencia['Salto'] = df_tendencia['Posicion_B'].fillna(999) - df_tendencia['Posicion_A']
+
+        st.subheader(f"Top 10 Productos en {m_a}")
+        st.dataframe(df_tendencia.sort_values('Posicion_A').head(10), use_container_width=True, hide_index=True)
+
+    # --- 11. EXPLORADOR POR DISCIPLINA (GRÁFICO DE BARRAS REUPERADO) ---
+    st.divider()
+    if disciplinas_opts:
+        disciplina_foc = st.selectbox("Análisis profundo por Disciplina:", disciplinas_opts)
+        df_dis_foc = df_so_f[df_so_f['DISCIPLINA'] == disciplina_foc].groupby(['SKU', 'DESCRIPCION'])['CANT'].sum().reset_index()
+        df_dis_foc = df_dis_foc.sort_values('CANT', ascending=False).head(10)
+
+        col_dis1, col_dis2 = st.columns([2, 1])
+        with col_dis1:
+            fig_bar_dis = px.bar(df_dis_foc, x='CANT', y='SKU', orientation='h', 
+                                 title=f"Top 10 Volumen: {disciplina_foc}",
+                                 hover_data=['DESCRIPCION'],
+                                 color_discrete_sequence=[COLOR_MAP_DIS.get(disciplina_foc, '#000')])
+            fig_bar_dis.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_bar_dis, use_container_width=True)
+        with col_dis2:
+            st.metric(f"Total {disciplina_foc}", f"{df_dis_foc['CANT'].sum():,.0f} prs")
+            st.write("Detalle de SKUs líderes en la categoría.")
+
+    # --- 12. TABLA MAESTRA FINAL ---
+    st.divider()
+    st.subheader("📋 Detalle Maestro Consolidado")
+    res_so = df_so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    df_final = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(res_so, on='SKU', how='left').fillna(0)
+    st.dataframe(df_final.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
+
+else:
+    st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
 
     # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
@@ -354,6 +451,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
