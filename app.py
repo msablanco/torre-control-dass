@@ -135,28 +135,29 @@ if data:
 # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=True):
-        user_question = st.chat_input("Consulta tendencias, ingresos o quiebres...")
-        if user_question and "GEMINI_API_KEY" in st.secrets:
-            # Contexto resumido de tus datos actuales para la IA
-            contexto = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingresos: {df_ing_f['CANT'].sum():.0f}."
+    with st.expander("🤖 IA - Asistente Estratégico", expanded=True):
+        u_q = st.chat_input("Consulta tendencias o quiebres...")
+        if u_q and "GEMINI_API_KEY" in st.secrets:
+            # Contexto de datos real
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
             try:
-                # Esta es la parte que hace la conexión real
-                response = model.generate_content(f"Eres analista de Dass. Datos: {contexto}. Responde breve: {user_question}")
-                st.info(f"**Análisis IA:** {response.text}")
+                # LLAMADA REAL A GEMINI (Conexión activa)
+                resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
+                st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
-                st.error(f"Error de conexión: {e}")
+                st.error(f"Error de conexión IA: {e}")
 
-st.divider() # <--- Verifica que esta línea esté alineada con 'with'
+    st.divider()
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
-k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
+    # KPIs PRINCIPALES
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
+    k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
+    k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
     
+    # Cálculo de stock (Línea que daba error, ahora alineada)
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
-k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
-
+    k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
 st.divider()
 
@@ -241,6 +242,7 @@ kpi3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
