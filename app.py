@@ -183,6 +183,18 @@ if data:
             if st.button("Limpiar"):
                 st.session_state.resultado_lateral = ""
                 st.rerun()
+                if 'df_so_f' in locals() or 'df_so_f' in globals():
+        with st.sidebar.expander("💬 Consultar a la IA", expanded=False):
+            with st.form("form_ia_sidebar"):
+                u_q = st.text_input("Pregunta sobre los datos:")
+                btn_preguntar = st.form_submit_button("Analizar")
+                
+                if btn_preguntar and u_q:
+                    # Ahora esto no fallará
+                    total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
+                    # ... resto del código de la IA ...
+    else:
+        st.sidebar.warning("Cargando base de datos...")
     # --- 6. APLICACIÓN DE LÓGICA DE FILTROS ---
     def filtrar_dataframe(df, filtrar_mes=True):
         if df.empty: return df
@@ -367,6 +379,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
