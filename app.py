@@ -158,7 +158,7 @@ with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=Tr
     k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
-    st.divider()
+st.divider()
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
@@ -241,6 +241,7 @@ with st.expander("🤖 IA - Consultas Directas sobre la Operación", expanded=Tr
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
