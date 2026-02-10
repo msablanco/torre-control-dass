@@ -135,27 +135,27 @@ if data:
 # --- 7. IA Y DASHBOARD ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
 
-    with st.expander("🤖 IA - Asistente Estratégico", expanded=True):
-        u_q = st.chat_input("Consulta tendencias o quiebres...")
+    with st.expander("🤖 IA - Asistente Estratégico Operativo", expanded=True):
+        u_q = st.chat_input("Consulta tendencias, ingresos o quiebres...")
         if u_q and "GEMINI_API_KEY" in st.secrets:
-            # Contexto de datos real
-            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingr: {df_ing_f['CANT'].sum():.0f}."
+            # Contexto resumido de datos para la IA
+            ctx = f"SO: {df_so_f['CANT'].sum():.0f}. SI: {df_si_f['CANT'].sum():.0f}. Ingresos: {df_ing_f['CANT'].sum():.0f}."
             try:
-                # LLAMADA REAL A GEMINI (Conexión activa)
+                # LLAMADA REAL A GEMINI (Esto activa la IA)
                 resp = model.generate_content(f"Eres analista de Dass. Datos: {ctx}. Pregunta: {u_q}")
                 st.info(f"**Análisis IA:** {resp.text}")
             except Exception as e:
-                st.error(f"Error de conexión IA: {e}")
+                st.error(f"Error en IA: {e}")
 
     st.divider()
 
-    # KPIs PRINCIPALES
+    # KPIs Principales (Alineados con el bloque anterior)
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Sell Out (Pares)", f"{df_so_f['CANT'].sum():,.0f}")
     k2.metric("Sell In (Pares)", f"{df_si_f['CANT'].sum():,.0f}")
-    k3.metric("Ingresos 2025", f"{df_ing_f['CANT'].sum():,.0f}")
+    k3.metric("Ingresos 2026", f"{df_ing_f['CANT'].sum():,.0f}")
     
-    # Cálculo de stock (Línea que daba error, ahora alineada)
+    # Esta es la línea que fallaba:
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     k4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
     # Asegúrate de que st.divider() tenga exactamente el mismo nivel que 'with'
@@ -242,6 +242,7 @@ st.divider()
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
