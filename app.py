@@ -30,7 +30,8 @@ COLOR_MAP_DIS = {
 
 COLOR_MAP_FRA = {
     'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
-    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
+    'GOOD': '#FF8C00', 'CORE': 
+'#696969', 'SIN CATEGORIA': '#D3D3D3'
 }
 
 # --- 3. CARGA DE DATOS DESDE GOOGLE DRIVE ---
@@ -237,3 +238,4 @@ kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
