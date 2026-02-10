@@ -301,7 +301,7 @@ if data:
     df_final = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(res_so, on='SKU', how='left').fillna(0)
     st.dataframe(df_final.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-else:
+    else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
 
     # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
@@ -451,6 +451,7 @@ else:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
