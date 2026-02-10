@@ -12,10 +12,10 @@ import google.generativeai as genai
 if "GEMINI_API_KEY" in st.secrets:
     try:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        # Se utiliza el nombre base para mejorar la compatibilidad con la API
+        # Usamos el nombre base. El SDK elegirá la versión v1 o v1beta automáticamente
         model = genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        st.error(f"Error al configurar Gemini: {e}")
+        st.error(f"Error de configuración: {e}")
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
 
@@ -338,6 +338,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
