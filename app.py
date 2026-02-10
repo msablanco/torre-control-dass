@@ -158,26 +158,34 @@ if data:
     # Cálculo de stock consolidado
     stock_dass = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not df_stk_snap.empty else 0
     kpi4.metric("Stock Depósito Dass", f"{stock_dass:,.0f}")
-    # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
-st.divider()
+# --- 8. MIX Y EVOLUCIÓN ---
+    st.divider()
     col_m1, col_m2, col_m3 = st.columns([1, 1, 2])
+    
     with col_m1:
-        if not df_so_f.empty:
-            fig_mix_so = px.pie(df_so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Mix Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
-            st.plotly_chart(fig_mix_so, use_container_width=True)
+        fig_mix_so = px.pie(df_so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), 
+                            values='CANT', names='DISCIPLINA', title="Mix Sell Out", 
+                            color_discrete_map=COLOR_MAP_DIS)
+        st.plotly_chart(fig_mix_so, use_container_width=True)
+
     with col_m2:
-        if not df_stk_snap.empty:
-            stk_mix = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
-            st.plotly_chart(px.pie(stk_mix, values='CANT', names='DISCIPLINA', title="Mix Stock Depósito", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+        stk_m = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
+        fig_mix_stk = px.pie(stk_m, values='CANT', names='DISCIPLINA', 
+                             title="Mix Stock Depósito", color_discrete_map=COLOR_MAP_DIS)
+        st.plotly_chart(fig_mix_stk, use_container_width=True)
+
     with col_m3:
-        evol_so = filtrar_dataframe(df_so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
-        evol_si = filtrar_dataframe(df_si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell In')
-        evol_ing = filtrar_dataframe(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Ingresos')
-        evol_total = evol_so.merge(evol_si, on='MES', how='outer').merge(evol_ing, on='MES', how='outer').fillna(0).sort_values('MES')
+        # Evolución con Línea de Ingresos (Lógica v12.2)
+        e_so = filtrar(df_so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='SO')
+        e_si = filtrar(df_si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='SI')
+        e_in = filtrar(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='IN')
+        e_t = e_so.merge(e_si, on='MES', how='outer').merge(e_in, on='MES', how='outer').fillna(0).sort_values('MES')
+        
         fig_evol = go.Figure()
-        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Ingresos'], name='Ingresos', line=dict(color='gray', dash='dot')))
-        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
-        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3)))
+        fig_evol.add_trace(go.Scatter(x=e_t['MES'], y=e_t['IN'], name='Ingresos', line=dict(color='#A9A9A9', dash='dot')))
+        fig_evol.add_trace(go.Scatter(x=e_t['MES'], y=e_t['SO'], name='Sell Out', line=dict(color='#0055A4', width=4)))
+        fig_evol.add_trace(go.Scatter(x=e_t['MES'], y=e_t['SI'], name='Sell In', line=dict(color='#FF3131', width=2)))
+        fig_evol.update_layout(title="Flujo Logístico: Sell Out vs Sell In vs Ingresos")
         st.plotly_chart(fig_evol, use_container_width=True)
 
     # --- 9. RANKING Y TENDENCIAS ---
@@ -232,6 +240,7 @@ st.divider()
 
 else:
     st.error("Verifique la carpeta de Drive.")
+
 
 
 
