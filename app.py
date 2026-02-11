@@ -154,34 +154,19 @@ if data:
     clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
     f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
 
-    # --- 6. APLICACIÓN DE LÓGICA DE FILTROS ---
-    def filtrar_dataframe(df, filtrar_mes=True):
-        if df.empty: return df
-        temp = df.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
-        temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
-        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
-        
-        if f_disciplina: temp = temp[temp['DISCIPLINA'].isin(f_disciplina)]
-        if f_franja: temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
-        if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
-        if f_clientes: temp = temp[temp['CLIENTE_UP'].isin(f_clientes)]
-        if filtrar_mes and mes_filtro != "Todos": temp = temp[temp['MES'] == mes_filtro]
-        return temp
-
+  # --- 6. APLICACIÓN DE LÓGICA DE FILTROS (Asegúrate que esto termine aquí) ---
     df_so_f = filtrar_dataframe(df_so_raw)
     df_si_f = filtrar_dataframe(df_si_raw)
-    df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
+    df_ing_f = filtrar_dataframe(df_ing_raw)
 
-# --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR (BAJO DEMANDA) ---
+    # --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR ---
     st.sidebar.divider()
     st.sidebar.subheader("🤖 Consultas Dass IA")
 
-    # Inicializamos la memoria de la IA para que la respuesta sea persistente
     if 'respuesta_ia' not in st.session_state:
         st.session_state.respuesta_ia = ""
 
-    # Usamos un formulario para "congelar" la ejecución de la IA
-  with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
+    with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
         with st.form("asistente_ia_form"):
             pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Ventas totales?")
             boton_enviar = st.form_submit_button("🚀 Analizar")
@@ -192,7 +177,6 @@ if data:
                 
                 with st.spinner("🧠 Pensando..."):
                     try:
-                        # Usamos 1.5-flash para mayor estabilidad de cuota
                         response = client.models.generate_content(
                             model="gemini-1.5-flash",
                             contents=f"Eres analista de Dass. Datos: {ctx_ia}. Pregunta: {pregunta_usuario}"
@@ -200,24 +184,18 @@ if data:
                         st.session_state.respuesta_ia = response.text
                     except Exception as e:
                         if "429" in str(e):
-                            st.error("⏳ Cuota agotada. Prueba con otra API Key o espera.")
+                            st.error("⏳ Cuota agotada.")
                         else:
                             st.error(f"Error: {e}")
 
-        if st.session_state.respuesta_ia:
-            st.info(st.session_state.respuesta_ia)
-            if st.button("🗑️ Limpiar Chat"):
-                st.session_state.respuesta_ia = ""
-                st.rerun()
+    # Muestra la respuesta fuera del formulario pero dentro del sidebar
+    if st.session_state.respuesta_ia:
+        st.sidebar.info(st.session_state.respuesta_ia)
+        if st.sidebar.button("🗑️ Limpiar Chat"):
+            st.session_state.respuesta_ia = ""
+            st.rerun()
 
-        # Mostramos la respuesta guardada (esto no gasta tokens)
-        if st.session_state.respuesta_ia:
-            st.info(st.session_state.respuesta_ia)
-            if st.button("🗑️ Limpiar Chat"):
-                st.session_state.respuesta_ia = ""
-                st.rerun()
-
-    # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
+    # --- TÍTULO PRINCIPAL ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
@@ -364,6 +342,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
