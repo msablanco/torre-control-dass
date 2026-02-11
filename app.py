@@ -8,16 +8,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 from google import genai  # Importante: la nueva librería
 
-# --- CONFIGURACIÓN IA (Optimizada para evitar bloqueos) ---
-@st.cache_resource
-def get_ai_client(api_key):
-    return genai.Client(api_key=api_key)
-
+# --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
 if "GEMINI_API_KEY" in st.secrets:
-    try:
-        client = get_ai_client(st.secrets["GEMINI_API_KEY"])
-    except Exception as e:
-        st.error("Error al inicializar el cliente de IA.")
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 else:
     st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
@@ -154,68 +147,67 @@ if data:
     clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
     f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
 
- # --- 6. DEFINICIÓN DE LA FUNCIÓN DE FILTRADO ---
-    # Esta función DEBE estar definida antes de ser llamada
+    # --- 6. APLICACIÓN DE LÓGICA DE FILTROS ---
     def filtrar_dataframe(df, filtrar_mes=True):
-        if df.empty: 
-            return df
-        
-        # Unimos con el maestro para tener las categorías
+        if df.empty: return df
         temp = df.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
         temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
         temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
         
-        # Aplicamos los filtros del sidebar
-        if f_disciplina: 
-            temp = temp[temp['DISCIPLINA'].isin(f_disciplina)]
-        if f_franja: 
-            temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
-        if search_query: 
-            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
-        if f_clientes: 
-            temp = temp[temp['CLIENTE_UP'].isin(f_clientes)]
-        if filtrar_mes and mes_filtro != "Todos": 
-            temp = temp[temp['MES'] == mes_filtro]
-            
+        if f_disciplina: temp = temp[temp['DISCIPLINA'].isin(f_disciplina)]
+        if f_franja: temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
+        if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
+        if f_clientes: temp = temp[temp['CLIENTE_UP'].isin(f_clientes)]
+        if filtrar_mes and mes_filtro != "Todos": temp = temp[temp['MES'] == mes_filtro]
         return temp
 
-    # --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR ---
+    df_so_f = filtrar_dataframe(df_so_raw)
+    df_si_f = filtrar_dataframe(df_si_raw)
+    df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
+
+# --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR (BAJO DEMANDA) ---
     st.sidebar.divider()
     st.sidebar.subheader("🤖 Consultas Dass IA")
 
+    # Inicializamos la memoria de la IA para que la respuesta sea persistente
     if 'respuesta_ia' not in st.session_state:
         st.session_state.respuesta_ia = ""
 
+    # Usamos un formulario para "congelar" la ejecución de la IA
     with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
         with st.form("asistente_ia_form"):
-            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Ventas totales?")
+            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
             boton_enviar = st.form_submit_button("🚀 Analizar")
             
+            # La IA SOLO se activa si presionas el botón
             if boton_enviar and pregunta_usuario:
+                # Preparamos un contexto resumido para ahorrar tokens
                 total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                ctx_ia = f"Sell Out: {total_so:,.0f} prs. Mes: {mes_filtro}."
+                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
+                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
                 
                 with st.spinner("🧠 Pensando..."):
                     try:
                         response = client.models.generate_content(
-                            model="gemini-1.5-flash",
-                            contents=f"Eres analista de Dass. Datos: {ctx_ia}. Pregunta: {pregunta_usuario}"
+                            model="gemini-2.0-flash-lite",
+                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
                         )
+                        # Guardamos en el estado de sesión
                         st.session_state.respuesta_ia = response.text
                     except Exception as e:
                         if "429" in str(e):
-                            st.error("⏳ Cuota agotada.")
+                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
                         else:
                             st.error(f"Error: {e}")
 
-    # Muestra la respuesta fuera del formulario pero dentro del sidebar
-    if st.session_state.respuesta_ia:
-        st.sidebar.info(st.session_state.respuesta_ia)
-        if st.sidebar.button("🗑️ Limpiar Chat"):
-            st.session_state.respuesta_ia = ""
-            st.rerun()
+        # Mostramos la respuesta guardada (esto no gasta tokens)
+        if st.session_state.respuesta_ia:
+            st.info(st.session_state.respuesta_ia)
+            if st.button("🗑️ Limpiar Chat"):
+                st.session_state.respuesta_ia = ""
+                st.rerun()
 
-    # --- TÍTULO PRINCIPAL ---
+    # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
@@ -362,11 +354,6 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
-
-
-
-
-
 
 
 
