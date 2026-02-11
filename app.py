@@ -181,38 +181,34 @@ if data:
         st.session_state.respuesta_ia = ""
 
     # Usamos un formulario para "congelar" la ejecución de la IA
-    with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
+  with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
         with st.form("asistente_ia_form"):
-            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
+            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Ventas totales?")
             boton_enviar = st.form_submit_button("🚀 Analizar")
             
-            # La IA SOLO se activa si presionas el botón
             if boton_enviar and pregunta_usuario:
-                # Preparamos un contexto resumido para ahorrar tokens
                 total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
-                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
+                ctx_ia = f"Sell Out: {total_so:,.0f} prs. Mes: {mes_filtro}."
                 
                 with st.spinner("🧠 Pensando..."):
                     try:
+                        # Usamos 1.5-flash para mayor estabilidad de cuota
                         response = client.models.generate_content(
-                            model="gemini-2.0-flash-lite",
-                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
-                        )
-                        # Guardamos en el estado de sesión
-                  with st.spinner("🧠 Pensando..."):
-                    try:
-                        # Cambiamos a 1.5-flash que tiene más cuota
-                        response = client.models.generate_content(
-                            model="gemini-1.5-flash", 
-                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
+                            model="gemini-1.5-flash",
+                            contents=f"Eres analista de Dass. Datos: {ctx_ia}. Pregunta: {pregunta_usuario}"
                         )
                         st.session_state.respuesta_ia = response.text
                     except Exception as e:
                         if "429" in str(e):
-                            st.error("⏳ Límite de Google alcanzado. Intenta con otra API Key o espera 24hs.")
+                            st.error("⏳ Cuota agotada. Prueba con otra API Key o espera.")
                         else:
-                            st.error(f"Error técnico: {e}")
+                            st.error(f"Error: {e}")
+
+        if st.session_state.respuesta_ia:
+            st.info(st.session_state.respuesta_ia)
+            if st.button("🗑️ Limpiar Chat"):
+                st.session_state.respuesta_ia = ""
+                st.rerun()
 
         # Mostramos la respuesta guardada (esto no gasta tokens)
         if st.session_state.respuesta_ia:
@@ -368,6 +364,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
