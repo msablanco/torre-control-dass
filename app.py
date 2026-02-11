@@ -8,13 +8,12 @@ import plotly.graph_objects as go
 import plotly.express as px
 from google import genai  # Importante: la nueva librería
 
-# --- CONFIGURACIÓN IA ---
+# --- CONFIGURACIÓN IA (Nueva versión simplificada) ---
+import google.generativeai as genai_old # Usaremos la librería estándar para máxima compatibilidad
+
 if "GEMINI_API_KEY" in st.secrets:
-    # Añadimos el parámetro de versión para evitar el error 404
-    client = genai.Client(
-        api_key=st.secrets["GEMINI_API_KEY"],
-        http_options={'api_version': 'v1'} # Forzamos v1 en lugar de v1beta
-    )
+    genai_old.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # No creamos el cliente aquí, lo invocamos directamente abajo
 else:
     st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
@@ -183,15 +182,15 @@ if data:
             
             if enviar and u_q:
                 try:
-                    # CAMBIO REALIZADO: gemini-1.5-flash para más estabilidad
-                    res = client.models.generate_content(
-                        model="gemini-1.5-flash", 
-                        contents=f"Datos: {df_so_f['CANT'].sum()} prs. Pregunta: {u_q}"
+                    # Usamos la sintaxis estándar de Google que es la más robusta
+                    model = genai_old.GenerativeModel("gemini-1.5-flash")
+                    res = model.generate_content(
+                        f"Eres analista de Dass. Datos: {df_so_f['CANT'].sum()} prs. Pregunta: {u_q}"
                     )
                     st.session_state.respuesta_ia = res.text
                 except Exception as e:
                     if "429" in str(e):
-                        st.error("⏳ Google limitó las consultas. Reintenta en 1 minuto.")
+                        st.error("⏳ Cuota agotada. Espera 60 segundos.")
                     else:
                         st.error(f"Error: {e}")
 
@@ -349,6 +348,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
