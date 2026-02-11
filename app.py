@@ -200,12 +200,19 @@ if data:
                             contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
                         )
                         # Guardamos en el estado de sesión
+                  with st.spinner("🧠 Pensando..."):
+                    try:
+                        # Cambiamos a 1.5-flash que tiene más cuota
+                        response = client.models.generate_content(
+                            model="gemini-1.5-flash", 
+                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
+                        )
                         st.session_state.respuesta_ia = response.text
                     except Exception as e:
                         if "429" in str(e):
-                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
+                            st.error("⏳ Límite de Google alcanzado. Intenta con otra API Key o espera 24hs.")
                         else:
-                            st.error(f"Error: {e}")
+                            st.error(f"Error técnico: {e}")
 
         # Mostramos la respuesta guardada (esto no gasta tokens)
         if st.session_state.respuesta_ia:
@@ -361,6 +368,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
