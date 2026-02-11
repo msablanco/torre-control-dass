@@ -6,6 +6,7 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
+import google.generativeai as genai_old
 from google import genai  # Importante: la nueva librería
 
 # --- CONFIGURACIÓN IA (Nueva versión simplificada) ---
@@ -348,6 +349,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
