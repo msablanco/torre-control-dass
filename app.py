@@ -181,7 +181,7 @@ if data:
                 try:
                     # CAMBIO REALIZADO: gemini-1.5-flash para más estabilidad
                     res = client.models.generate_content(
-                        model="gemini-1.5-flash-002", 
+                        model="gemini-1.5-flash-8b", 
                         contents=f"Datos: {df_so_f['CANT'].sum()} prs. Pregunta: {u_q}"
                     )
                     st.session_state.respuesta_ia = res.text
@@ -345,6 +345,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
