@@ -6,13 +6,6 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-from google import genai  # Importante: la nueva librería
-
-# --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
-if "GEMINI_API_KEY" in st.secrets:
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-else:
-    st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Performance & Inteligencia => Fila Calzado", layout="wide")
@@ -117,15 +110,14 @@ if data:
     df_so_raw = limpiar_transaccional('Sell_out')
     df_si_raw = limpiar_transaccional('Sell_in')
     df_stk_raw = limpiar_transaccional('Stock')
-    df_ing_raw = limpiar_transaccional('Ingresos') # NUEVA CARGA
+    df_ing_raw = limpiar_transaccional('Ingresos')
 
-    # Snapshot de Stock Actual (Dass vs Clientes)
+    # Snapshot de Stock Actual
     if not df_stk_raw.empty:
         max_fecha_stk = df_stk_raw['FECHA_DT'].max()
         df_stk_snap = df_stk_raw[df_stk_raw['FECHA_DT'] == max_fecha_stk].copy()
         df_stk_snap = df_stk_snap.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION']], on='SKU', how='left')
         df_stk_snap['DISCIPLINA'] = df_stk_snap['DISCIPLINA'].fillna('SIN CATEGORIA')
-        df_stk_snap['FRANJA_PRECIO'] = df_stk_snap['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
     else:
         df_stk_snap = pd.DataFrame()
 
@@ -134,7 +126,6 @@ if data:
     search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo", "").upper()
     
     meses_disponibles = sorted([str(x) for x in df_so_raw['MES'].dropna().unique()], reverse=True) if not df_so_raw.empty else []
-    mes_actual_default = meses_disponibles[0] if meses_disponibles else None
     mes_filtro = st.sidebar.selectbox("📅 Mes de Análisis (KPIs y Mix)", ["Todos"] + meses_disponibles, index=0)
 
     disciplinas_opts = sorted(list(df_maestro['DISCIPLINA'].unique())) if not df_maestro.empty else []
@@ -163,52 +154,11 @@ if data:
 
     df_so_f = filtrar_dataframe(df_so_raw)
     df_si_f = filtrar_dataframe(df_si_raw)
-    df_ing_f = filtrar_dataframe(df_ing_raw) # NUEVO FILTRO
+    df_ing_f = filtrar_dataframe(df_ing_raw)
 
-# --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR (BAJO DEMANDA) ---
-    st.sidebar.divider()
-    st.sidebar.subheader("🤖 Consultas Dass IA")
-
-    # Inicializamos la memoria de la IA para que la respuesta sea persistente
-    if 'respuesta_ia' not in st.session_state:
-        st.session_state.respuesta_ia = ""
-
-    # Usamos un formulario para "congelar" la ejecución de la IA
-    with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
-        with st.form("asistente_ia_form"):
-            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
-            boton_enviar = st.form_submit_button("🚀 Analizar")
-            
-            # La IA SOLO se activa si presionas el botón
-            if boton_enviar and pregunta_usuario:
-                # Preparamos un contexto resumido para ahorrar tokens
-                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
-                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
-                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
-                
-                with st.spinner("🧠 Pensando..."):
-                    try:
-                        response = client.models.generate_content(
-                            model="gemini-2.0-flash-lite",
-                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
-                        )
-                        # Guardamos en el estado de sesión
-                        st.session_state.respuesta_ia = response.text
-                    except Exception as e:
-                        if "429" in str(e):
-                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
-                        else:
-                            st.error(f"Error: {e}")
-
-        # Mostramos la respuesta guardada (esto no gasta tokens)
-        if st.session_state.respuesta_ia:
-            st.info(st.session_state.respuesta_ia)
-            if st.button("🗑️ Limpiar Chat"):
-                st.session_state.respuesta_ia = ""
-                st.rerun()
-
-    # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
+    # --- TÍTULO PRINCIPAL ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
+    
     # --- 8. MIX Y EVOLUCIÓN HISTÓRICA ---
     st.divider()
     col_mix1, col_mix2, col_mix3 = st.columns([1, 1, 2])
@@ -226,15 +176,14 @@ if data:
             st.plotly_chart(fig_mix_stk, use_container_width=True)
 
     with col_mix3:
-        # Evolución Sell Out vs Sell In vs Ingresos
         evol_so = filtrar_dataframe(df_so_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
         evol_si = filtrar_dataframe(df_si_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Sell In')
-        evol_ing = filtrar_dataframe(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Ingresos') # NUEVO
+        evol_ing = filtrar_dataframe(df_ing_raw, False).groupby('MES')['CANT'].sum().reset_index(name='Ingresos')
         
         evol_total = evol_so.merge(evol_si, on='MES', how='outer').merge(evol_ing, on='MES', how='outer').fillna(0).sort_values('MES')
         
         fig_evol = go.Figure()
-        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Ingresos'], name='Ingresos', line=dict(color='#A9A9A9', width=2, dash='dot'))) # NUEVA LÍNEA
+        fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Ingresos'], name='Ingresos', line=dict(color='#A9A9A9', width=2, dash='dot')))
         fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
         fig_evol.add_trace(go.Scatter(x=evol_total['MES'], y=evol_total['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3)))
         fig_evol.update_layout(title="Flujo Logístico: Ingresos vs Sell In vs Sell Out", hovermode='x unified')
@@ -250,7 +199,6 @@ if data:
     with col_sel2:
         mes_anterior = st.selectbox("Mes Base (B)", meses_disponibles, index=min(1, len(meses_disponibles)-1), key='mb')
 
-    # Lógica de Ranking
     def obtener_ranking(mes):
         df_mes = df_so_raw[df_so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index()
         df_mes['Posicion'] = df_mes['CANT'].rank(ascending=False, method='min')
@@ -261,10 +209,9 @@ if data:
 
     df_tendencia = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Posicion', 'CANT']], on='SKU', how='inner')
     df_tendencia = df_tendencia.merge(rk_b[['SKU', 'Posicion']], on='SKU', how='left', suffixes=('_A', '_B'))
-    df_tendencia['Posicion_B'] = df_tendencia['Posicion_B'].fillna(999) # Si no existía, puesto 999
+    df_tendencia['Posicion_B'] = df_tendencia['Posicion_B'].fillna(999)
     df_tendencia['Salto'] = df_tendencia['Posicion_B'] - df_tendencia['Posicion_A']
 
-    # Visualización Ranking Top 10
     st.subheader(f"Top 10 Productos con Mayor Venta en {mes_actual}")
     top_10 = df_tendencia.sort_values('Posicion_A').head(10).copy()
     
@@ -287,7 +234,6 @@ if data:
     
     col_dis1, col_dis2 = st.columns([2, 1])
     with col_dis1:
-        st.write(f"**Top 10 en {disciplina_foc}:**")
         df_dis_foc_show = df_dis_foc.sort_values('Posicion_Cat').head(10)
         st.dataframe(df_dis_foc_show[['Posicion_Cat', 'SKU', 'DESCRIPCION', 'CANT']].rename(columns={'Posicion_Cat': 'Puesto Cat', 'CANT': 'Pares'}), use_container_width=True, hide_index=True)
     with col_dis2:
@@ -298,12 +244,8 @@ if data:
     # --- 11. ALERTAS DE QUIEBRE Y COBERTURA (MOS) ---
     st.divider()
     st.header("🚨 Alerta de Quiebre y Cobertura (MOS)")
-    
-    # Unificar datos para MOS
     stk_dass_group = df_stk_snap[df_stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
     df_alerta = df_tendencia.merge(stk_dass_group, on='SKU', how='left').fillna(0)
-    
-    # MOS Proyectado: Stock / Venta del mes actual
     df_alerta['MOS_Proyectado'] = (df_alerta['Stock_Dass'] / df_alerta['CANT']).replace([float('inf'), -float('inf')], 0).fillna(0)
 
     def definir_semaforo_mensual(row):
@@ -338,8 +280,6 @@ if data:
     # --- 12. TABLA MAESTRA DETALLADA ---
     st.divider()
     st.subheader("📋 Detalle Maestro de Productos (Consolidado)")
-    
-    # Agrupamos SI e Ingresos para la tabla final
     res_si = df_si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
     res_ing = df_ing_f.groupby('SKU')['CANT'].sum().reset_index(name='Ingresos')
     res_so = df_so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
@@ -354,38 +294,3 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
