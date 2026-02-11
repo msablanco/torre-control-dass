@@ -154,10 +154,30 @@ if data:
     clientes_si = sorted(df_si_raw['CLIENTE_UP'].unique()) if not df_si_raw.empty else []
     f_clientes = st.sidebar.multiselect("👤 Filtrar por Cliente", sorted(list(set(clientes_so) | set(clientes_si))))
 
-  # --- 6. APLICACIÓN DE LÓGICA DE FILTROS (Asegúrate que esto termine aquí) ---
-    df_so_f = filtrar_dataframe(df_so_raw)
-    df_si_f = filtrar_dataframe(df_si_raw)
-    df_ing_f = filtrar_dataframe(df_ing_raw)
+ # --- 6. DEFINICIÓN DE LA FUNCIÓN DE FILTRADO ---
+    # Esta función DEBE estar definida antes de ser llamada
+    def filtrar_dataframe(df, filtrar_mes=True):
+        if df.empty: 
+            return df
+        
+        # Unimos con el maestro para tener las categorías
+        temp = df.merge(df_maestro[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
+        temp['DISCIPLINA'] = temp['DISCIPLINA'].fillna('SIN CATEGORIA')
+        temp['FRANJA_PRECIO'] = temp['FRANJA_PRECIO'].fillna('SIN CATEGORIA')
+        
+        # Aplicamos los filtros del sidebar
+        if f_disciplina: 
+            temp = temp[temp['DISCIPLINA'].isin(f_disciplina)]
+        if f_franja: 
+            temp = temp[temp['FRANJA_PRECIO'].isin(f_franja)]
+        if search_query: 
+            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
+        if f_clientes: 
+            temp = temp[temp['CLIENTE_UP'].isin(f_clientes)]
+        if filtrar_mes and mes_filtro != "Todos": 
+            temp = temp[temp['MES'] == mes_filtro]
+            
+        return temp
 
     # --- 7. CONFIGURACIÓN DEL ASISTENTE EN EL SIDEBAR ---
     st.sidebar.divider()
@@ -342,6 +362,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
