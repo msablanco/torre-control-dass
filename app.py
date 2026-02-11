@@ -8,9 +8,16 @@ import plotly.graph_objects as go
 import plotly.express as px
 from google import genai  # Importante: la nueva librería
 
-# --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
+# --- CONFIGURACIÓN IA (Optimizada para evitar bloqueos) ---
+@st.cache_resource
+def get_ai_client(api_key):
+    return genai.Client(api_key=api_key)
+
 if "GEMINI_API_KEY" in st.secrets:
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    try:
+        client = get_ai_client(st.secrets["GEMINI_API_KEY"])
+    except Exception as e:
+        st.error("Error al inicializar el cliente de IA.")
 else:
     st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
@@ -354,6 +361,7 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
+
 
 
 
