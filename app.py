@@ -6,15 +6,11 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 import plotly.graph_objects as go
 import plotly.express as px
-import google.generativeai as genai_old
 from google import genai  # Importante: la nueva librería
 
-# --- CONFIGURACIÓN IA (Nueva versión simplificada) ---
-import google.generativeai as genai_old # Usaremos la librería estándar para máxima compatibilidad
-
+# --- CONFIGURACIÓN IA (Ponlo justo después de los imports) ---
 if "GEMINI_API_KEY" in st.secrets:
-    genai_old.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # No creamos el cliente aquí, lo invocamos directamente abajo
+    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 else:
     st.error("⚠️ Falta la GEMINI_API_KEY en los Secrets")
 
@@ -173,34 +169,43 @@ if data:
     st.sidebar.divider()
     st.sidebar.subheader("🤖 Consultas Dass IA")
 
+    # Inicializamos la memoria de la IA para que la respuesta sea persistente
     if 'respuesta_ia' not in st.session_state:
         st.session_state.respuesta_ia = ""
 
-    with st.sidebar.expander("💬 Consultar IA", expanded=False):
-        with st.form("form_ia"):
-            u_q = st.text_input("Pregunta:")
-            enviar = st.form_submit_button("Analizar")
+    # Usamos un formulario para "congelar" la ejecución de la IA
+    with st.sidebar.expander("💬 Haz una pregunta técnica", expanded=False):
+        with st.form("asistente_ia_form"):
+            pregunta_usuario = st.text_input("¿Qué quieres saber hoy?", placeholder="Ej: ¿Cuál es el producto con más stock?")
+            boton_enviar = st.form_submit_button("🚀 Analizar")
             
-            if enviar and u_q:
-                try:
-                    # Usamos la sintaxis estándar de Google que es la más robusta
-                    model = genai_old.GenerativeModel("gemini-1.5-flash")
-                    res = model.generate_content(
-                        f"Eres analista de Dass. Datos: {df_so_f['CANT'].sum()} prs. Pregunta: {u_q}"
-                    )
-                    st.session_state.respuesta_ia = res.text
-                except Exception as e:
-                    if "429" in str(e):
-                        st.error("⏳ Cuota agotada. Espera 60 segundos.")
-                    else:
-                        st.error(f"Error: {e}")
+            # La IA SOLO se activa si presionas el botón
+            if boton_enviar and pregunta_usuario:
+                # Preparamos un contexto resumido para ahorrar tokens
+                total_so = df_so_f['CANT'].sum() if not df_so_f.empty else 0
+                total_si = df_si_f['CANT'].sum() if not df_si_f.empty else 0
+                contexto = f"Sell Out: {total_so:,.0f} prs. Sell In: {total_si:,.0f} prs. Filtros: {mes_filtro}."
+                
+                with st.spinner("🧠 Pensando..."):
+                    try:
+                        response = client.models.generate_content(
+                            model="gemini-2.0-flash-lite",
+                            contents=f"Eres analista de Dass. Contexto actual: {contexto}. Pregunta: {pregunta_usuario}"
+                        )
+                        # Guardamos en el estado de sesión
+                        st.session_state.respuesta_ia = response.text
+                    except Exception as e:
+                        if "429" in str(e):
+                            st.error("⏳ Cuota agotada. Espera 60 segundos.")
+                        else:
+                            st.error(f"Error: {e}")
 
-    # Mostrar la respuesta fuera del formulario pero en el sidebar
-    if st.session_state.respuesta_ia:
-        st.sidebar.info(st.session_state.respuesta_ia)
-        if st.sidebar.button("🗑️ Limpiar Chat"):
-            st.session_state.respuesta_ia = ""
-            st.rerun()
+        # Mostramos la respuesta guardada (esto no gasta tokens)
+        if st.session_state.respuesta_ia:
+            st.info(st.session_state.respuesta_ia)
+            if st.button("🗑️ Limpiar Chat"):
+                st.session_state.respuesta_ia = ""
+                st.rerun()
 
     # --- TÍTULO PRINCIPAL (FUERA DEL SIDEBAR) ---
     st.title("📊 Torre de Control: Sell Out & Abastecimiento")
@@ -349,13 +354,6 @@ if data:
 
 else:
     st.error("No se pudieron cargar los datos. Verifique la carpeta de Drive.")
-
-
-
-
-
-
-
 
 
 
