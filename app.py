@@ -176,7 +176,7 @@ if data:
     df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-   # --- 10. DETALLE POR SKU (CORREGIDO) ---
+  # --- 10. DETALLE POR SKU (CORREGIDO) ---
 st.divider()
 st.subheader("📋 Detalle por SKU")
 
@@ -233,6 +233,7 @@ st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_wi
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
