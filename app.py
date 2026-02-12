@@ -31,63 +31,33 @@ def load_drive_data():
             while not done:
                 _, done = downloader.next_chunk()
             fh.seek(0)
-            name = f['name'].replace('.csv', '')
-            # Lectura flexible
+            
+            # 1. Leer el CSV
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
-            df.columns = df.columns.str.strip().str.upper()
+            
+            # 2. LIMPIEZA AGRESIVA DE COLUMNAS
+            # Quitamos espacios, pasamos a mayúsculas y eliminamos caracteres raros del nombre
+            df.columns = [str(c).strip().upper().replace('ï»¿', '') for c in df.columns]
+            
+            # 3. NORMALIZACIÓN DE COLUMNA SKU
+            # Si alguien puso 'ARTICULO' o 'CODIGO', lo renombramos a SKU
+            posibles_sku = ['SKU', 'ARTICULO', 'CODIGO', 'PRODUCTO', 'ITEM']
+            for p in posibles_sku:
+                if p in df.columns:
+                    df = df.rename(columns={p: 'SKU'})
+                    break
+            
+            # 4. LIMPIEZA DE DATOS EN SKU
             if 'SKU' in df.columns:
-                df['SKU'] = df['SKU'].astype(str).str.replace(r'[^a-zA-Z0-9]', '', regex=True).str.upper()
+                df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+            
+            name = f['name'].replace('.csv', '')
             dfs[name] = df
+            
         return dfs
     except Exception as e:
         st.error(f"Error en carga: {e}")
         return {}
-
-data = load_drive_data()
-
-# --- 2. PROCESAMIENTO CORE ---
-if data:
-    # Asignación de DataFrames
-    maestro = data.get('Maestro_Productos', pd.DataFrame())
-    sell_in = data.get('Sell_In_Ventas', pd.DataFrame())
-    sell_out = data.get('Sell_Out', pd.DataFrame())
-    stock = data.get('Stock', pd.DataFrame())
-    ingresos = data.get('Ingresos', pd.DataFrame())
-
-    # Formateo de fechas y periodos
-    for df in [sell_in, sell_out, ingresos]:
-        col_fecha = next((c for c in df.columns if 'FECHA' in c or 'MES' in c), None)
-        if col_fecha:
-            df['FECHA_DT'] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
-            df['MES_KEY'] = df['FECHA_DT'].dt.strftime('%Y-%m')
-
-    # --- 3. FILTROS LATERALES ---
-    st.sidebar.header("🎯 SEGMENTACIÓN ESTRATÉGICA")
-    
-    # Filtro de Emprendimiento (Punto 12)
-    emp_list = ["TODOS", "RETAIL", "ECOM", "WHOLESALE"]
-    f_emp = st.sidebar.selectbox("Emprendimiento", emp_list)
-    
-    # Filtros de Maestro
-    f_disciplina = st.sidebar.multiselect("Disciplina", maestro['DISCIPLINA'].unique() if not maestro.empty else [])
-    f_genero = st.sidebar.multiselect("Género", maestro['GENERO'].unique() if not maestro.empty else [])
-    f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if not maestro.empty else [])
-    
-    # Aplicar filtros al Maestro para cascada
-    m_filtrado = maestro.copy()
-    if f_disciplina: m_filtrado = m_filtrado[m_filtrado['DISCIPLINA'].isin(f_disciplina)]
-    if f_genero: m_filtrado = m_filtrado[m_filtrado['GENERO'].isin(f_genero)]
-    if f_franja: m_filtrado = m_filtrado[m_filtrado['FRANJA_PRECIO'].isin(f_franja)]
-
-    # --- 4. LÓGICA DE EXTRAPOLACIÓN (Factor de Expansión) ---
-    # Si es Wholesale, calculamos el factor basado en el Sell In de quienes reportan
-    if f_emp == "WHOLESALE":
-        clientes_reportan = sell_out[sell_out['EMPRENDIMIENTO'] == 'WHOLESALE']['CLIENTE'].unique()
-        si_total = sell_in[sell_in['EMPRENDIMIENTO'] == 'WHOLESALE']['UNIDADES'].sum()
-        si_reportan = sell_in[(sell_in['EMPRENDIMIENTO'] == 'WHOLESALE') & (sell_in['CLIENTE'].isin(clientes_reportan))]['UNIDADES'].sum()
-        factor_expansion = (si_total / si_reportan) if si_reportan > 0 else 1
-    else:
-        factor_expansion = 1
 
     # --- 5. PESTAÑAS DE ANÁLISIS ---
     tab1, tab2, tab3 = st.tabs(["📊 Estrategia General", "⚡ Tactical (MOS & Rankings)", "👟 SKU Deep Dive"])
@@ -151,3 +121,4 @@ if data:
 
 else:
     st.info("Esperando archivos CSV en la carpeta de Google Drive...")
+
