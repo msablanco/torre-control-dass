@@ -122,36 +122,43 @@ if data:
     st.divider()
     st.subheader("📦 Stock en Clientes (Wholesale)")
 
-    # 1. Verificamos que los datos necesarios existan
-    if 'df_stk_snap' in locals() and 'df_maestro_f' in locals():
-        
-        # 2. Filtramos el stock usando el maestro filtrado (df_maestro_f)
-        # Esto hace que el gráfico de stock responda a la barra lateral
-        df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
-
-        if not df_stk_f.empty:
-            # 3. Unimos para traer Disciplina y Franja para los gráficos
-            df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
+    # Usamos try/except para capturar cualquier error de variables no definidas
+    try:
+        # Verificamos que df_stk_snap exista y no sea None
+        if df_stk_snap is not None:
             
-            col_st1, col_st2 = st.columns(2)
+            # Filtramos el stock basándonos en el maestro que ya pasó por la sidebar
+            # Esto garantiza que el gráfico de stock responda a los filtros
+            df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
 
-            with col_st1:
-                stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-                fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
-                                     title="Stock por Disciplina",
-                                     color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
-                st.plotly_chart(fig_stk_dis, use_container_width=True)
+            if not df_stk_f.empty:
+                # Unimos para traer Disciplina y Franja
+                df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
+                
+                col_st1, col_st2 = st.columns(2)
 
-            with col_st2:
-                stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-                fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
-                                     title="Stock por Franja",
-                                     color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
-                st.plotly_chart(fig_stk_fra, use_container_width=True)
+                with col_st1:
+                    stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                    fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
+                                         title="Stock por Disciplina",
+                                         color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+                    st.plotly_chart(fig_stk_dis, use_container_width=True)
+
+                with col_st2:
+                    stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                    fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
+                                         title="Stock por Franja",
+                                         color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
+                    st.plotly_chart(fig_stk_fra, use_container_width=True)
+            else:
+                st.info("No hay stock disponible para los filtros seleccionados.")
         else:
-            st.info("No hay stock para los filtros seleccionados.")
-    else:
-        st.warning("Variable df_stk_snap o df_maestro_f no definida.")
+            st.warning("No se ha cargado el archivo de Stock (df_stk_snap).")
+            
+    except NameError as e:
+        st.error(f"Error de variables: {e}. Asegúrate de que los filtros se apliquen antes de esta sección.")
+    except Exception as e:
+        st.error(f"Ocurrió un error inesperado: {e}")
         
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -285,6 +292,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
