@@ -176,27 +176,27 @@ if data:
     df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- 10. ALERTA DE QUIEBRE (SEMÁFORO) ---
-    st.divider()
-    st.subheader("🚨 Alerta de Quiebre (MOS)")
-    df_mos = df_detalle.merge(rk_a[['SKU', 'P_A']], on='SKU', how='left').merge(rk_b[['SKU', 'P_B']], on='SKU', how='left').fillna({'P_B': 999})
-    df_mos['Salto'] = df_mos['P_B'] - df_mos['P_A']
-    df_mos['Stock_Total'] = df_mos['Stock_Dass'] + df_mos['Stock_Clientes']
-    df_mos['MOS'] = (df_mos['Stock_Total'] / df_mos['Sell_Out']).replace([float('inf')], 0).fillna(0)
+   # --- 10. DETALLE POR SKU (CORREGIDO) ---
+st.divider()
+st.subheader("📋 Detalle por SKU")
 
-    def semaforo_logic(row):
-        if row['Salto'] >= 5 and row['MOS'] < 1 and row['Sell_Out'] > 0: return '🔴 CRÍTICO'
-        if row['Salto'] > 0 and row['MOS'] < 2 and row['Sell_Out'] > 0: return '🟡 ADVERTENCIA'
-        return '🟢 OK'
+# Agrupamos los ingresos por SKU para sumarlos
+t_ingresos = ingresos_raw.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
 
-    df_mos['Estado'] = df_mos.apply(semaforo_logic, axis=1)
-    df_riesgo = df_mos[df_mos['Estado'] != '🟢 OK'].sort_values(['Salto', 'MOS'], ascending=[False, True])
+t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
+t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
+t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
+t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
 
-    if not df_riesgo.empty:
-        st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'Sell_Out', 'Salto', 'MOS', 'Futuros_Ingresos']].rename(columns={'Sell_Out': 'Venta Mes', 'MOS': 'Meses Stock'}), use_container_width=True, hide_index=True)
+# Unimos t_ingresos a la cadena de merges
+df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
+    .merge(t_stk_c, on='SKU', how='left') \
+    .merge(t_stk_d, on='SKU', how='left') \
+    .merge(t_si, on='SKU', how='left') \
+    .merge(t_ingresos, on='SKU', how='left').fillna(0) # <-- Aquí se integra el dato
 
-    st.plotly_chart(px.scatter(df_mos[df_mos['Sell_Out'] > 0], x='Salto', y='MOS', size='Sell_Out', color='Estado', hover_name='DESCRIPCION', color_discrete_map={'🔴 CRÍTICO': '#ff4b4b', '🟡 ADVERTENCIA': '#ffa500', '🟢 OK': '#28a745'}), use_container_width=True)
-
+# Mostrar la tabla
+st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
     # --- 11. RANKINGS Y TENDENCIAS ---
     st.divider()
     st.subheader("🏆 Rankings y Saltos de Posición")
@@ -233,6 +233,7 @@ if data:
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
