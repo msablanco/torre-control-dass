@@ -9,7 +9,7 @@ import io
 
 st.set_page_config(page_title="FILA - Torre de Control v1.0", layout="wide")
 
-# --- 1. CONEXIÓN Y CARGA DE DATOS ---
+# --- 1. FUNCIÓN DE CARGA (AISLADA) ---
 @st.cache_data(ttl=600)
 def load_drive_data():
     try:
@@ -32,101 +32,112 @@ def load_drive_data():
                 _, done = downloader.next_chunk()
             fh.seek(0)
             
-            # 1. Leer el CSV
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
-            
-            # 2. LIMPIEZA AGRESIVA DE COLUMNAS
-            # Quitamos espacios, pasamos a mayúsculas y eliminamos caracteres raros del nombre
             df.columns = [str(c).strip().upper().replace('ï»¿', '') for c in df.columns]
             
-            # 3. NORMALIZACIÓN DE COLUMNA SKU
-            # Si alguien puso 'ARTICULO' o 'CODIGO', lo renombramos a SKU
+            # Unificación de columna SKU
             posibles_sku = ['SKU', 'ARTICULO', 'CODIGO', 'PRODUCTO', 'ITEM']
             for p in posibles_sku:
                 if p in df.columns:
                     df = df.rename(columns={p: 'SKU'})
                     break
             
-           # --- 4. LÓGICA DE EXTRAPOLACIÓN (Factor de Expansión) ---
-    if f_emp == "WHOLESALE":
-        # Verificamos si existen las columnas antes de operar
-        if not sell_out.empty and 'EMPRENDIMIENTO' in sell_out.columns and 'CLIENTE' in sell_out.columns:
-            clientes_reportan = sell_out[sell_out['EMPRENDIMIENTO'] == 'WHOLESALE']['CLIENTE'].unique()
+            if 'SKU' in df.columns:
+                df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
-            # Filtramos Sell In para Wholesale
-            si_wholesale = sell_in[sell_in['EMPRENDIMIENTO'] == 'WHOLESALE']
-            si_total = si_wholesale['UNIDADES'].sum()
-            
-            # Sell In de los clientes que sí nos dan Sell Out
-            si_reportan = si_wholesale[si_wholesale['CLIENTE'].isin(clientes_reportan)]['UNIDADES'].sum()
-            
-            factor_expansion = (si_total / si_reportan) if si_reportan > 0 else 1
-        else:
-            factor_expansion = 1
+            name = f['name'].replace('.csv', '')
+            dfs[name] = df
+        return dfs
+    except Exception as e:
+        st.error(f"Error cargando desde Drive: {e}")
+        return {}
+
+# --- 2. CARGA DE DATOS ---
+data = load_drive_data()
+
+if not data:
+    st.warning("⚠️ No se encontraron archivos en la carpeta de Drive o falta configuración de secrets.")
+    st.stop()
+
+# Asignación segura de DataFrames
+maestro = data.get('Maestro_Productos', pd.DataFrame())
+sell_in = data.get('Sell_In_Ventas', pd.DataFrame())
+sell_out = data.get('Sell_Out', pd.DataFrame())
+stock = data.get('Stock', pd.DataFrame())
+ingresos = data.get('Ingresos', pd.DataFrame())
+
+# --- 3. PROCESAMIENTO DE FECHAS ---
+for df in [sell_in, sell_out, ingresos]:
+    if not df.empty:
+        col_fecha = next((c for c in df.columns if 'FECHA' in c or 'MES' in c), None)
+        if col_fecha:
+            df['FECHA_DT'] = pd.to_datetime(df[col_fecha], dayfirst=True, errors='coerce')
+            df['MES_KEY'] = df['FECHA_DT'].dt.strftime('%Y-%m')
+
+# --- 4. SIDEBAR (FILTROS) ---
+st.sidebar.header("🎯 FILTROS ESTRATÉGICOS")
+
+emp_list = ["TODOS", "RETAIL", "ECOM", "WHOLESALE"]
+f_emp = st.sidebar.selectbox("Emprendimiento", emp_list)
+
+f_disciplina = st.sidebar.multiselect("Disciplina", maestro['DISCIPLINA'].unique() if not maestro.empty else [])
+f_genero = st.sidebar.multiselect("Género", maestro['GENERO'].unique() if not maestro.empty else [])
+
+# Aplicar filtros al Maestro
+m_filtrado = maestro.copy()
+if f_disciplina: m_filtrado = m_filtrado[m_filtrado['DISCIPLINA'].isin(f_disciplina)]
+if f_genero: m_filtrado = m_filtrado[m_filtrado['GENERO'].isin(f_genero)]
+
+# --- 5. LÓGICA DE EXTRAPOLACIÓN ---
+factor_expansion = 1.0
+if f_emp == "WHOLESALE" and not sell_out.empty and not sell_in.empty:
+    if 'EMPRENDIMIENTO' in sell_out.columns and 'EMPRENDIMIENTO' in sell_in.columns:
+        clientes_reportan = sell_out[sell_out['EMPRENDIMIENTO'] == 'WHOLESALE']['CLIENTE'].unique()
+        si_wh = sell_in[sell_in['EMPRENDIMIENTO'] == 'WHOLESALE']
+        total_si = si_wh['UNIDADES'].sum()
+        si_repo = si_wh[si_wh['CLIENTE'].isin(clientes_reportan)]['UNIDADES'].sum()
+        factor_expansion = (total_si / si_repo) if si_repo > 0 else 1.0
+
+# --- 6. PESTAÑAS ---
+tab1, tab2, tab3 = st.tabs(["📊 Estrategia", "⚡ Tactical", "👟 SKU Deep Dive"])
+
+with tab1:
+    st.subheader("Performance de Mix")
+    if not sell_in.empty and not m_filtrado.empty:
+        df_mix = sell_in.merge(m_filtrado, on='SKU', how='inner')
+        if not df_mix.empty:
+            c1, c2 = st.columns(2)
+            fig1 = px.pie(df_mix, values='UNIDADES', names='DISCIPLINA', title="Ventas por Disciplina")
+            fig2 = px.pie(df_mix, values='UNIDADES', names='GENERO', title="Ventas por Género")
+            c1.plotly_chart(fig1, use_container_width=True)
+            c2.plotly_chart(fig2, use_container_width=True)
     else:
-        factor_expansion = 1
+        st.info("Cargue Maestro y Sell In para ver el mix.")
 
-    # --- 5. PESTAÑAS DE ANÁLISIS ---
-    tab1, tab2, tab3 = st.tabs(["📊 Estrategia General", "⚡ Tactical (MOS & Rankings)", "👟 SKU Deep Dive"])
-
-    with tab1:
-        st.subheader("Mix de Negocio: Sell In vs Sell Out")
-        c1, c2, c3 = st.columns(3)
+with tab2:
+    st.subheader("Months of Stock (MOS)")
+    # Cálculo simplificado de MOS
+    if not stock.empty and not sell_out.empty:
+        stk_sum = stock.groupby('SKU')['CANTIDAD'].sum().reset_index()
+        so_avg = sell_out.groupby('SKU')['CANTIDAD'].mean().reset_index() # Promedio mensual
         
-        # Agrupamiento para gráficos de torta
-        def plot_mix(df_v, col_attr, title):
-            temp = df_v.merge(maestro, on='SKU', how='inner')
-            fig = px.pie(temp, values='UNIDADES' if 'UNIDADES' in temp.columns else 'CANTIDAD', 
-                         names=col_attr, title=title, hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
-            return fig
-
-        with c1: st.plotly_chart(plot_mix(sell_in, 'DISCIPLINA', "Mix Sell In por Disciplina"), use_container_width=True)
-        with c2: st.plotly_chart(plot_mix(sell_in, 'GENERO', "Mix Sell In por Género"), use_container_width=True)
-        with c3: st.plotly_chart(plot_mix(sell_in, 'FRANJA_PRECIO', "Mix Sell In por Franja"), use_container_width=True)
-
-    with tab2:
-        st.subheader("Análisis de Velocidad y Ranking")
+        res = m_filtrado[['SKU', 'DESCRIPCION']].merge(stk_sum, on='SKU', how='left')
+        res = res.merge(so_avg, on='SKU', how='left').fillna(0)
+        res['VENTA_PROY'] = res['CANTIDAD_y'] * factor_expansion
+        res['MOS'] = (res['CANTIDAD_x'] / res['VENTA_PROY']).replace([float('inf')], 99).fillna(0)
         
-        # Cálculo de MOS
-        so_agrupado = sell_out.groupby('SKU')['CANTIDAD'].mean().reset_index() # Promedio mensual simplificado
-        stk_agrupado = stock.groupby('SKU')['CANTIDAD'].sum().reset_index()
+        st.dataframe(res.sort_values('VENTA_PROY', ascending=False), use_container_width=True)
+
+with tab3:
+    st.subheader("Línea de Tiempo de Oportunidad")
+    if not m_filtrado.empty:
+        sku_select = st.selectbox("Seleccionar SKU", m_filtrado['SKU'].unique())
         
-        mos_df = m_filtrado[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(stk_agrupado, on='SKU', how='left')
-        mos_df = mos_df.merge(so_agrupado, on='SKU', how='left').fillna(0)
-        mos_df['CANTIDAD_y'] = mos_df['CANTIDAD_y'] * factor_expansion # Aplicamos el factor
-        mos_df['MOS'] = (mos_df['CANTIDAD_x'] / mos_df['CANTIDAD_y']).replace([float('inf')], 99).fillna(0)
+        # Gráfico simple de tendencia
+        sku_so = sell_out[sell_out['SKU'] == sku_select].groupby('MES_KEY')['CANTIDAD'].sum().reset_index()
+        sku_si = sell_in[sell_in['SKU'] == sku_select].groupby('MES_KEY')['UNIDADES'].sum().reset_index()
         
-        st.dataframe(mos_df.sort_values('CANTIDAD_y', ascending=False), use_container_width=True)
-
-    with tab3:
-        st.subheader("Línea de Tiempo de Oportunidad")
-        sku_select = st.selectbox("Seleccionar SKU para análisis detallado", m_filtrado['SKU'].unique())
-        
-        if sku_select:
-            # Datos históricos y futuros del SKU
-            hist_so = sell_out[sell_out['SKU'] == sku_select].groupby('MES_KEY')['CANTIDAD'].sum()
-            hist_si = sell_in[sell_in['SKU'] == sku_select].groupby('MES_KEY')['UNIDADES'].sum()
-            fut_ing = ingresos[ingresos['SKU'] == sku_select].groupby('MES_KEY')['UNIDADES'].sum()
-            
-            # Gráfico de Proyección
-            fig_proj = go.Figure()
-            fig_proj.add_trace(go.Scatter(x=hist_so.index, y=hist_so.values, name="Sell Out Real", line=dict(color='blue', width=3)))
-            fig_proj.add_trace(go.Bar(x=fut_ing.index, y=fut_ing.values, name="Ingresos (Plan/Real)", marker_color='green', opacity=0.5))
-            
-            # Línea de Stock (Acumulativa simplificada)
-            stk_inicial = stock[stock['SKU'] == sku_select]['CANTIDAD'].sum()
-            st.metric("Stock Físico Actual", f"{stk_inicial:,.0f} unidades")
-            
-            st.plotly_chart(fig_proj, use_container_width=True)
-            
-            # Alerta de Salud
-            condicion_sku = sell_in[sell_in['SKU'] == sku_select]['CONDICION'].iloc[-1] if sku_select in sell_in['SKU'].values else "LINEA"
-            if condicion_sku == "OFF":
-                st.warning(f"⚠️ El SKU {sku_select} está operando bajo condición OFF. Revisar rentabilidad.")
-            else:
-                st.success(f"✅ El SKU {sku_select} se mantiene como producto de LINEA.")
-
-else:
-    st.info("Esperando archivos CSV en la carpeta de Google Drive...")
-
-
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=sku_so['MES_KEY'], y=sku_so['CANTIDAD'], name="Sell Out", line=dict(color='blue')))
+        fig.add_trace(go.Bar(x=sku_si['MES_KEY'], y=sku_si['UNIDADES'], name="Sell In", marker_color='orange', opacity=0.4))
+        st.plotly_chart(fig, use_container_width=True)
