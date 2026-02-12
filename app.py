@@ -19,11 +19,6 @@ COLOR_MAP_DIS = {
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
 
-COLOR_MAP_FRA = {
-    'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
-    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
-}
-
 # --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
@@ -58,7 +53,7 @@ if data:
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'FRANJA_PRECIO': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
+        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION']
@@ -80,49 +75,51 @@ if data:
     stk_raw = clean_df('Stock')
     ingresos_raw = clean_df('ingresos')
 
-    # --- 4. FILTROS SIDEBAR ---
-    st.sidebar.header("🔍 Filtros Globales")
+    # --- 4. FILTROS ---
     meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
     f_periodo = st.sidebar.selectbox("📅 Mes de Análisis", meses_op if meses_op else ["S/D"])
     search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo").upper()
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['DISCIPLINA'].unique()))
-    f_fra = st.sidebar.multiselect("💰 Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
-    
-    f_cli_so = st.sidebar.multiselect("👤 Sell Out Clientes", sorted(so_raw['CLIENTE_UP'].unique()))
-    f_cli_si = st.sidebar.multiselect("📦 Sell In Clientes", sorted(si_raw['CLIENTE_UP'].unique()))
-    f_emp = st.sidebar.multiselect("🏬 Emprendimiento (Stock)", sorted(stk_raw['CLIENTE_UP'].unique()))
 
-    def apply_logic(df, filter_month=True, tipo=None):
+    def apply_logic(df, filter_month=True):
         if df.empty: return df
-        temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
+        temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'BUSQUEDA']], on='SKU', how='left')
         if filter_month: temp = temp[temp['MES'] == f_periodo]
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
-        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
-        
-        if tipo == 'SO' and f_cli_so: temp = temp[temp['CLIENTE_UP'].isin(f_cli_so)]
-        if tipo == 'SI' and f_cli_si: temp = temp[temp['CLIENTE_UP'].isin(f_cli_si)]
-        if tipo == 'STK' and f_emp: temp = temp[temp['CLIENTE_UP'].isin(f_emp)]
         return temp
 
-    so_f = apply_logic(so_raw, True, 'SO')
-    si_f = apply_logic(si_raw, True, 'SI')
-    stk_f = apply_logic(stk_raw, True, 'STK')
+    so_f = apply_logic(so_raw, True)
+    si_f = apply_logic(si_raw, True)
+    stk_f = apply_logic(stk_raw, True)
 
     # --- 5. LÓGICA DE INGRESOS (INDEPENDIENTE DEL FILTRO DE MES) ---
     if not ingresos_raw.empty:
-        # Los ingresos se filtran por disciplina/busqueda pero NO por el mes seleccionado en el sidebar
-        df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'BUSQUEDA']], on='SKU', how='left')
+        # Los ingresos ignoran el filtro de "Mes de Análisis" para mostrar el futuro
+        df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'BUSQUEDA']], on='SKU', how='left')
         if f_dis: df_ing_base = df_ing_base[df_ing_base['DISCIPLINA'].isin(f_dis)]
-        if f_fra: df_ing_base = df_ing_base[df_ing_base['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: df_ing_base = df_ing_base[df_ing_base['BUSQUEDA'].str.contains(search_query, na=False)]
-        
         t_futuro = df_ing_base.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
     else:
         t_futuro = pd.DataFrame(columns=['SKU', 'Futuros_Ingresos'])
 
-    # --- 6. VISUALIZACIÓN ---
+    # --- 6. TABLA DETALLE ---
     st.title(f"📊 Dashboard Performance - {f_periodo}")
+    st.divider()
+    st.subheader("📋 Detalle SKU: Stock, Venta e Ingresos Futuros")
+
+    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
+    t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
+    t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Clientes')
+
+    df_detalle = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(t_so, on='SKU', how='left') \
+        .merge(t_stk_c, on='SKU', how='left') \
+        .merge(t_stk_d, on='SKU', how='left') \
+        .merge(t_si, on='SKU', how='left') \
+        .merge(t_futuro, on='SKU', how='left').fillna(0)
+
+    st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
     
     # --- 7. TABLA DETALLE COMPLETA ---
     st.divider()
@@ -238,6 +235,7 @@ st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_wi
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
