@@ -19,6 +19,11 @@ COLOR_MAP_DIS = {
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
 
+COLOR_MAP_FRA = {
+    'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
+    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
+}
+
 # --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
@@ -48,7 +53,7 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 3. PROCESAMIENTO ---
+    # --- 3. PROCESAMIENTO MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -75,12 +80,15 @@ if data:
     stk_raw = clean_df('Stock')
     ingresos_raw = clean_df('ingresos')
 
-    # --- 4. FILTROS ---
+    # --- 4. FILTROS SIDEBAR ---
     st.sidebar.header("🔍 Filtros Globales")
     meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
     f_periodo = st.sidebar.selectbox("📅 Mes de Análisis", meses_op if meses_op else ["S/D"])
     search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo").upper()
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['DISCIPLINA'].unique()))
+    f_fra = st.sidebar.multiselect("💰 Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
+    
+    st.sidebar.subheader("Filtros Clientes")
     f_cli_so = st.sidebar.multiselect("👤 Sell Out Clientes", sorted(so_raw['CLIENTE_UP'].unique()))
     f_cli_si = st.sidebar.multiselect("📦 Sell In Clientes", sorted(si_raw['CLIENTE_UP'].unique()))
     f_emp = st.sidebar.multiselect("🏬 Emprendimiento (Stock)", sorted(stk_raw['CLIENTE_UP'].unique()))
@@ -90,7 +98,9 @@ if data:
         temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
         if filter_month: temp = temp[temp['MES'] == f_periodo]
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
+        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
+        
         if tipo == 'SO' and f_cli_so: temp = temp[temp['CLIENTE_UP'].isin(f_cli_so)]
         if tipo == 'SI' and f_cli_si: temp = temp[temp['CLIENTE_UP'].isin(f_cli_si)]
         if tipo == 'STK' and f_emp: temp = temp[temp['CLIENTE_UP'].isin(f_emp)]
@@ -100,12 +110,12 @@ if data:
     si_f = apply_logic(si_raw, True, 'SI')
     stk_f = apply_logic(stk_raw, True, 'STK')
 
-    # --- 5. LÓGICA DE INGRESOS FUTUROS (CORREGIDA) ---
+    # --- 5. LÓGICA DE FUTUROS INGRESOS (CORREGIDA) ---
     hoy = pd.Timestamp(datetime.date.today()).replace(day=1)
     if not ingresos_raw.empty:
-        # Aquí NO aplicamos el filtro de f_periodo para que sume el futuro
-        df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'BUSQUEDA']], on='SKU', how='left')
+        df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'BUSQUEDA']], on='SKU', how='left')
         if f_dis: df_ing_base = df_ing_base[df_ing_base['DISCIPLINA'].isin(f_dis)]
+        if f_fra: df_ing_base = df_ing_base[df_ing_base['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: df_ing_base = df_ing_base[df_ing_base['BUSQUEDA'].str.contains(search_query, na=False)]
         
         df_ing_futuros = df_ing_base[df_ing_base['FECHA_DT'] >= hoy].copy()
@@ -113,27 +123,23 @@ if data:
     else:
         t_futuro = pd.DataFrame(columns=['SKU', 'Futuros_Ingresos'])
 
-    # --- 6. LÍNEA DE TIEMPO (EVOLUCIÓN HISTÓRICA) ---
+    # --- 6. LÍNEA DE TIEMPO ---
     st.title(f"📊 Dashboard Performance - {f_periodo}")
-    st.subheader("📈 Evolución Histórica (Sell Out vs Sell In vs Stocks)")
-    
+    st.subheader("📈 Evolución Histórica")
     h_so = apply_logic(so_raw, False, 'SO').groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
     h_si = apply_logic(si_raw, False, 'SI').groupby('MES')['CANT'].sum().reset_index(name='Sell In')
     h_stk = apply_logic(stk_raw, False, 'STK').groupby(['MES', 'CLIENTE_UP'])['CANT'].sum().reset_index()
-    
     h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Dass')
     h_sc = h_stk[~h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Cliente')
-    
     df_hist = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
-    
     fig_line = go.Figure()
     fig_line.add_trace(go.Scatter(x=df_hist['MES'], y=df_hist['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
     fig_line.add_trace(go.Scatter(x=df_hist['MES'], y=df_hist['Sell In'], name='Sell In', line=dict(color='#FF3131', width=2, dash='dot')))
     fig_line.add_trace(go.Bar(x=df_hist['MES'], y=df_hist['Stock Dass'], name='Stock Dass', marker_color='#00A693', opacity=0.5))
     fig_line.add_trace(go.Bar(x=df_hist['MES'], y=df_hist['Stock Cliente'], name='Stock Cliente', marker_color='#FFD700', opacity=0.5))
-    fig_line.update_layout(hovermode="x unified", barmode='stack')
     st.plotly_chart(fig_line, use_container_width=True)
-# --- 7. GRÁFICOS (DISCIPLINA Y FRANJA) ---
+
+    # --- 7. GRÁFICOS (DISCIPLINA Y FRANJA) ---
     st.divider()
     st.subheader("👟 Análisis por Disciplina")
     c1, c2, c3 = st.columns(3)
@@ -146,10 +152,10 @@ if data:
     with f1: st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     with f2: st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
     with f3: st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    # --- 7. TABLA DETALLE SKU ---
+
+    # --- 8. TABLA DETALLE COMPLETA POR SKU ---
     st.divider()
-    st.subheader("📋 Detalle SKU: Performance & Futuros Ingresos")
-    
+    st.subheader("📋 Detalle SKU: Stock, Venta y Futuros Ingresos")
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
     t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
     t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
@@ -161,15 +167,12 @@ if data:
         .merge(t_si, on='SKU', how='left') \
         .merge(t_futuro, on='SKU', how='left').fillna(0)
     
-    df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
-    
+    df_detalle['Rotacion_Stock_Cliente'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- 8. RANKINGS Y ALERTAS (SEMAFORO) ---
+    # --- 9. ALERTA DE QUIEBRE (SEMÁFORO) ---
     st.divider()
-    st.subheader("🚨 Alerta de Quiebre (Semáforo)")
-    
-    # Cálculo de saltos de ranking para el semáforo
+    st.subheader("🚨 Alerta de Quiebre (MOS)")
     m_ant = meses_op[min(1, len(meses_op)-1)]
     rk_a = so_raw[so_raw['MES'] == f_periodo].groupby('SKU')['CANT'].sum().reset_index().assign(P_A=lambda x: x['CANT'].rank(ascending=False))
     rk_b = so_raw[so_raw['MES'] == m_ant].groupby('SKU')['CANT'].sum().reset_index().assign(P_B=lambda x: x['CANT'].rank(ascending=False))
@@ -189,26 +192,9 @@ if data:
 
     if not df_riesgo.empty:
         st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'Sell_Out', 'Salto', 'MOS']].rename(columns={'Sell_Out': 'Venta Mes', 'MOS': 'Meses Stock'}), use_container_width=True, hide_index=True)
-        st.download_button("📥 Descargar Reporte Reposición", data=df_riesgo.to_csv(index=False).encode('utf-8'), file_name=f"quiebres_{f_periodo}.csv")
+        st.download_button("📥 Descargar Reporte Reposición", data=df_riesgo.to_csv(index=False).encode('utf-8'), file_name=f"alertas_{f_periodo}.csv")
 
-    
-    # --- 9. TABLA DETALLE COMPLETA ---
-    st.divider()
-    st.subheader("📋 Detalle SKU: Performance & Inventario")
-    
-    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
-    t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
-    t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
-    t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Clientes')
 
-    df_detalle = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
-        .merge(t_si, on='SKU', how='left') \
-        .merge(t_stk_d, on='SKU', how='left') \
-        .merge(t_stk_c, on='SKU', how='left') \
-        .merge(t_futuro, on='SKU', how='left').fillna(0)
-    
-    df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
-    st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
     # --- 10. RANKINGS Y TENDENCIAS ---
     st.divider()
@@ -270,6 +256,7 @@ if data:
 
 
   
+
 
 
 
