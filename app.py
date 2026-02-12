@@ -243,6 +243,6 @@ else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
 
 
-else:
-    st.error("No se detectaron archivos en Google Drive.")
+
+
 
