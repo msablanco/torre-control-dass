@@ -120,41 +120,41 @@ if data:
 
 # --- 6. STOCK EN CLIENTES (Wholesale) ---
     st.divider()
-    st.subheader("📦 Stock en Clientes (Wholesale)")
-
-    # 1. Filtramos el Stock usando los SKUs del Maestro ya filtrado por la Sidebar
-    # Esto hace que el gráfico sea dinámico
-    df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])] if df_stk_snap is not None else pd.DataFrame()
-
-    # 2. Solo mostramos los gráficos si hay datos después de filtrar
-    if not df_stk_f.empty and df_stk_f['CANT'].sum() > 0:
+    
+    # Verificamos primero si la variable df_stk_snap existe en el código
+    if 'df_stk_snap' in locals() and df_stk_snap is not None:
         
-        # Unimos para traer las etiquetas de DISCIPLINA y FRANJA
-        df_stk_vis = pd.merge(
-            df_stk_f, 
-            df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], 
-            on='SKU', 
-            how='inner'
-        )
+        # FILTRADO DINÁMICO: Cruza el stock real con los filtros de la sidebar (df_maestro_f)
+        df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
         
-        col_st1, col_st2 = st.columns(2)
+        # SOLO si hay stock después de filtrar, mostramos el título y los gráficos
+        if not df_stk_f.empty and df_stk_f['CANT'].sum() > 0:
+            st.subheader("📦 Stock en Clientes (Wholesale)")
+            
+            # Unimos para traer etiquetas de DISCIPLINA y FRANJA
+            df_stk_vis = pd.merge(
+                df_stk_f, 
+                df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], 
+                on='SKU', 
+                how='inner'
+            )
+            
+            col_st1, col_st2 = st.columns(2)
 
-        with col_st1:
-            stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-            fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
-                                 title="Stock por Disciplina",
-                                 color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
-            st.plotly_chart(fig_stk_dis, use_container_width=True)
+            with col_st1:
+                stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
+                                     title="Stock por Disciplina",
+                                     color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+                st.plotly_chart(fig_stk_dis, use_container_width=True)
 
-        with col_st2:
-            stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-            fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
-                                 title="Stock por Franja",
-                                 color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
-            st.plotly_chart(fig_stk_fra, use_container_width=True)
-    else:
-        # Si no hay stock para esos filtros, mostramos un mensaje sutil en lugar de gráficos vacíos
-        st.info("No se detectó stock disponible para los filtros seleccionados.")
+            with col_st2:
+                stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
+                                     title="Stock por Franja",
+                                     color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
+                st.plotly_chart(fig_stk_fra, use_container_width=True)
+        # Si no hay stock, no hace nada (la sección queda vacía como pediste)
         
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -288,6 +288,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
