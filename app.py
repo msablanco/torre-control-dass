@@ -88,7 +88,6 @@ if data:
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['DISCIPLINA'].unique()))
     f_fra = st.sidebar.multiselect("💰 Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
     
-    st.sidebar.subheader("Filtros Clientes")
     f_cli_so = st.sidebar.multiselect("👤 Sell Out Clientes", sorted(so_raw['CLIENTE_UP'].unique()))
     f_cli_si = st.sidebar.multiselect("📦 Sell In Clientes", sorted(si_raw['CLIENTE_UP'].unique()))
     f_emp = st.sidebar.multiselect("🏬 Emprendimiento (Stock)", sorted(stk_raw['CLIENTE_UP'].unique()))
@@ -110,15 +109,14 @@ if data:
     si_f = apply_logic(si_raw, True, 'SI')
     stk_f = apply_logic(stk_raw, True, 'STK')
 
-    # --- 5. LÓGICA DE FUTUROS INGRESOS (CORREGIDA: INDEPENDIENTE DEL MES) ---
+    # --- 5. LÓGICA DE INGRESOS (INDEPENDIENTE DEL MES) ---
     hoy_actual = pd.Timestamp(datetime.date.today()).replace(day=1)
     if not ingresos_raw.empty:
-        # Los ingresos NO se filtran por f_periodo, se filtran por fecha >= hoy
         df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'BUSQUEDA']], on='SKU', how='left')
         if f_dis: df_ing_base = df_ing_base[df_ing_base['DISCIPLINA'].isin(f_dis)]
         if f_fra: df_ing_base = df_ing_base[df_ing_base['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: df_ing_base = df_ing_base[df_ing_base['BUSQUEDA'].str.contains(search_query, na=False)]
-        
+        # Sumamos todos los ingresos registrados que sean de hoy en adelante
         t_futuro = df_ing_base[df_ing_base['FECHA_DT'] >= hoy_actual].groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
     else:
         t_futuro = pd.DataFrame(columns=['SKU', 'Futuros_Ingresos'])
@@ -140,28 +138,10 @@ if data:
     fig_line.add_trace(go.Bar(x=df_hist['MES'], y=df_hist['Stock Cliente'], name='Stock Cliente', marker_color='#FFD700', opacity=0.5))
     st.plotly_chart(fig_line, use_container_width=True)
 
-    # --- 7. GRÁFICOS DE TORTA ---
-    st.divider()
-    st.subheader("👟 Análisis por Disciplina")
-    c1, c2, c3 = st.columns(3)
-    with c1: st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with c2: st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with c3: st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-
-    st.subheader("💰 Análisis por Franja de Precio")
-    f1, f2, f3 = st.columns(3)
-    with f1: st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    with f2: st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    with f3: st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-
-    # --- 8. PRECALCULO DE RANKINGS (Para evitar el NameError) ---
-    m_ant_periodo = meses_op[min(1, len(meses_op)-1)]
-    rk_a = so_raw[so_raw['MES'] == f_periodo].groupby('SKU')['CANT'].sum().reset_index().assign(P_A=lambda x: x['CANT'].rank(ascending=False))
-    rk_b = so_raw[so_raw['MES'] == m_ant_periodo].groupby('SKU')['CANT'].sum().reset_index().assign(P_B=lambda x: x['CANT'].rank(ascending=False))
-
-    # --- 9. TABLA DETALLE COMPLETA POR SKU ---
+    # --- 7. TABLA DETALLE PRINCIPAL (UNIFICADA) ---
     st.divider()
     st.subheader("📋 Detalle SKU: Stock, Venta e Ingresos Futuros")
+    
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
     t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
     t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
@@ -175,6 +155,41 @@ if data:
     
     df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
+
+    # --- 8. RANKINGS Y TENDENCIAS ---
+    st.divider()
+    st.subheader("🏆 Rankings y Saltos de Posición")
+    col_sel1, col_sel2 = st.columns(2)
+    with col_sel1: m_act = st.selectbox("Periodo Reciente (A)", meses_op, index=0, key="act")
+    with col_sel2: m_ant = st.selectbox("Periodo Anterior (B)", meses_op, index=min(1, len(meses_op)-1), key="ant")
+
+    rk_a = so_raw[so_raw['MES'] == m_act].groupby('SKU')['CANT'].sum().reset_index().assign(P_A=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    rk_b = so_raw[so_raw['MES'] == m_ant].groupby('SKU')['CANT'].sum().reset_index().assign(P_B=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    
+    df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'P_A', 'CANT']], on='SKU', how='inner')
+    df_rank = df_rank.merge(rk_b[['SKU', 'P_B']], on='SKU', how='left').fillna({'P_B': 999})
+    df_rank['Salto'] = df_rank['P_B'] - df_rank['P_A']
+    df_rank = df_rank.merge(t_futuro, on='SKU', how='left').fillna(0)
+
+    top_actual = df_rank.sort_values('P_A').head(10).copy()
+    top_actual['Evolución'] = top_actual['Salto'].apply(lambda val: "🆕 Nuevo" if val > 500 else (f"⬆️ +{int(val)}" if val > 0 else (f"⬇️ {int(val)}" if val < 0 else "➡️ =")))
+    st.dataframe(top_actual[['P_A', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución', 'Futuros_Ingresos']], use_container_width=True, hide_index=True)
+
+    # --- 9. EXPLORADOR TÁCTICO ---
+    st.divider()
+    st.subheader("👟 Explorador Táctico por Disciplina")
+    disciplina_select = st.selectbox("Seleccioná una Disciplina:", sorted(df_rank['DISCIPLINA'].unique()))
+    df_rank_dis = df_rank[df_rank['DISCIPLINA'] == disciplina_select].copy()
+    df_rank_dis['Pos_Categoría'] = df_rank_dis['CANT'].rank(ascending=False, method='min')
+
+    col_l1, col_l2 = st.columns([2, 1])
+    with col_l1:
+        df_dis_show = df_rank_dis.sort_values('Pos_Categoría').head(10).copy()
+        df_dis_show['Evolución'] = df_dis_show['Salto'].apply(lambda x: "🔥 Nuevo" if x > 500 else (f"🔼 +{int(x)}" if x > 0 else (f"🔽 {int(x)}" if x < 0 else "⏺️ =")))
+        st.dataframe(df_dis_show[['Pos_Categoría', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución', 'Futuros_Ingresos']], use_container_width=True, hide_index=True)
+    with col_l2:
+        st.metric(f"Total Venta {disciplina_select}", f"{df_rank_dis['CANT'].sum():,.0f}")
+        st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
  # --- 10. DETALLE POR SKU (CORREGIDO E INDENTADO) ---
     st.divider()
@@ -239,6 +254,7 @@ st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_wi
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
