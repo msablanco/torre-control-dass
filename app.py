@@ -118,11 +118,14 @@ if data:
 
     so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
 
-  # --- 6. STOCK EN CLIENTES (DINÁMICO CON FILTROS) ---
-    st.divider()
-    st.subheader("📦 Stock en Clientes (Wholesale)")
+ # --- 6. STOCK EN CLIENTES (Wholesale) ---
+st.divider()
+st.subheader("📦 Stock en Clientes (Wholesale)")
 
-    # Filtramos el stock basándonos en el maestro ya filtrado por la sidebar
+# Agregamos esta validación para evitar el NameError
+if 'df_stk_snap' in locals() and 'df_maestro_f' in locals():
+    
+    # Filtramos el stock basándonos en el maestro ya filtrado
     df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
 
     if not df_stk_f.empty:
@@ -130,7 +133,6 @@ if data:
         df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
         
         col_st1, col_st2 = st.columns(2)
-
         with col_st1:
             stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
             fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
@@ -145,8 +147,9 @@ if data:
                                  color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
             st.plotly_chart(fig_stk_fra, use_container_width=True)
     else:
-        st.info("No hay stock disponible para los filtros seleccionados.")
-
+        st.info("No hay datos de stock que coincidan con los filtros seleccionados.")
+else:
+    st.error("Error: Los datos de Stock o el Maestro de productos no están cargados correctamente.")
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
     st.subheader("📌 Análisis por Disciplina")
@@ -279,6 +282,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
