@@ -234,7 +234,43 @@ if data:
         df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rank_a[['SKU', 'Puesto_A', 'CANT']], on='SKU', how='inner')
         df_rank = df_rank.merge(rank_b[['SKU', 'Puesto_B']], on='SKU', how='left').fillna({'Puesto_B': 999})
         df_rank['Salto'] = df_rank['Puesto_B'] - df_rank['Puesto_A']
+ # --- 12. RANKING DE PRODUCTOS Y TENDENCIAS ---
+    st.divider()
+    st.header("🏆 Inteligencia de Rankings y Tendencias")
+    
+    col_sel1, col_sel2 = st.columns(2)
+    with col_sel1:
+        mes_actual = st.selectbox("Mes de Comparación (A)", meses_disponibles, index=0, key='ma')
+    with col_sel2:
+        mes_anterior = st.selectbox("Mes Base (B)", meses_disponibles, index=min(1, len(meses_disponibles)-1), key='mb')
 
+    # Lógica de Ranking
+    def obtener_ranking(mes):
+        df_mes = df_so_raw[df_so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index()
+        df_mes['Posicion'] = df_mes['CANT'].rank(ascending=False, method='min')
+        return df_mes
+
+    rk_a = obtener_ranking(mes_actual)
+    rk_b = obtener_ranking(mes_anterior)
+
+    df_tendencia = df_maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Posicion', 'CANT']], on='SKU', how='inner')
+    df_tendencia = df_tendencia.merge(rk_b[['SKU', 'Posicion']], on='SKU', how='left', suffixes=('_A', '_B'))
+    df_tendencia['Posicion_B'] = df_tendencia['Posicion_B'].fillna(999) # Si no existía, puesto 999
+    df_tendencia['Salto'] = df_tendencia['Posicion_B'] - df_tendencia['Posicion_A']
+
+    # Visualización Ranking Top 10
+    st.subheader(f"Top 10 Productos con Mayor Venta en {mes_actual}")
+    top_10 = df_tendencia.sort_values('Posicion_A').head(10).copy()
+    
+    def format_salto(val):
+        if val > 500: return "🆕 Nuevo"
+        if val > 0: return f"⬆️ +{int(val)}"
+        if val < 0: return f"⬇️ {int(val)}"
+        return "➡️ ="
+
+    top_10['Tendencia'] = top_10['Salto'].apply(format_salto)
+    st.dataframe(top_10[['Posicion_A', 'SKU', 'DESCRIPCION', 'CANT', 'Tendencia']].rename(columns={'Posicion_A': 'Puesto', 'CANT': 'Pares'}), use_container_width=True, hide_index=True)
+        
         # --- 13. ALERTA DE QUIEBRE REPARADA ---
         st.divider()
         st.subheader(f"🚨 Alerta de Quiebre (Basado en {m_actual})")
@@ -267,6 +303,7 @@ if data:
                              title="Velocidad (Salto Ranking) vs Cobertura (MOS)",
                              color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745', '🟢 OK: Sin Venta': '#28a745'})
         st.plotly_chart(fig_mos, use_container_width=True)
+
 
 
 
