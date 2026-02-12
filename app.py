@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Fila - Performance Master", layout="wide")
+st.set_page_config(page_title="Fila - Performance & Inventory", layout="wide")
 
 # --- 1. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
@@ -29,7 +29,7 @@ def load_data():
                 status, done = downloader.next_chunk()
             fh.seek(0)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python', dtype=str)
-            df.columns = df.columns.str.strip().str.upper()
+            df.columns = df.columns.str.strip().str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8').str.upper()
             dfs[item['name'].replace('.csv', '')] = df
         return dfs
     except Exception as e:
@@ -39,76 +39,91 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 2. LIMPIEZA AGRESIVA ---
-    def clean(df_name):
-        df = data.get(df_name, pd.DataFrame()).copy()
-        if df.empty: return pd.DataFrame()
-        # SKU
+    # --- 2. FUNCIÓN DE LIMPIEZA ROBUSTA ---
+    def clean_df(name):
+        df = data.get(name, pd.DataFrame()).copy()
+        if df.empty: 
+            return pd.DataFrame(columns=['SKU', 'CANT', 'FECHA_DT', 'MES', 'CLIENTE_UP'])
+        
         df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
-        # CANTIDAD (Buscamos 'UNIDADES' específicamente por tu descripción)
+        
+        # Cantidad
         col_c = next((c for c in df.columns if any(x in c for x in ['UNID', 'CANT', 'QTY'])), None)
         df['CANT'] = pd.to_numeric(df[col_c], errors='coerce').fillna(0) if col_c else 0
-        # FECHA
-        col_f = next((c for c in df.columns if any(x in c for x in ['FECHA', 'ARRIVO', 'ETA'])), None)
+        
+        # Fecha (Forzamos detección de Fecha de Arrivo o similares)
+        col_f = next((c for c in df.columns if any(x in c for x in ['FECHA', 'ARRIVO', 'ETA', 'VENTA'])), None)
         if col_f:
             df['FECHA_DT'] = pd.to_datetime(df[col_f], dayfirst=True, errors='coerce')
             df['MES'] = df['FECHA_DT'].dt.strftime('%Y-%m')
+        else:
+            df['MES'] = "S/D" # Evita el KeyError
+            
+        df['CLIENTE_UP'] = df.get('CLIENTE', 'S/D').astype(str).str.upper()
         return df
 
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
-    df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
-    
-    so_raw = clean('Sell_out')
-    stk_raw = clean('Stock')
-    ing_raw = clean('ingresos')
+    if not df_ma.empty:
+        df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
+
+    so_raw = clean_df('Sell_out')
+    stk_raw = clean_df('Stock')
+    ing_raw = clean_df('ingresos')
 
     # --- 3. SIDEBAR ---
     st.sidebar.header("Filtros")
-    meses = sorted(so_raw['MES'].dropna().unique(), reverse=True)
-    f_mes = st.sidebar.selectbox("Mes de Análisis", meses)
-    f_dis = st.sidebar.multiselect("Disciplina", sorted(df_ma['DISCIPLINA'].unique()))
+    meses_op = sorted(list(set(so_raw['MES'].dropna().unique()) | set(stk_raw['MES'].dropna().unique())), reverse=True)
+    f_mes = st.sidebar.selectbox("Mes de Análisis", meses_op if meses_op else ["S/D"])
+    f_dis = st.sidebar.multiselect("Disciplina", sorted(df_ma['DISCIPLINA'].unique().astype(str)) if 'DISCIPLINA' in df_ma.columns else [])
     search = st.sidebar.text_input("Buscar SKU").upper()
 
-    # --- 4. LÓGICA DE INGRESOS (SOLUCIÓN AL CERO) ---
-    # Separamos ingresos antes de filtrar por mes del sidebar
-    if not ing_raw.empty:
-        # Ingresos Futuros: Todo lo que sea posterior al mes de análisis
-        ing_futuros = ing_raw[ing_raw['MES'] > f_mes].groupby('SKU')['CANT'].sum().reset_index(name='ING_FUTURO')
-        # Ingresos Pasados/Presente: Lo que entró en el mes seleccionado
-        ing_mes_act = ing_raw[ing_raw['MES'] == f_mes].groupby('SKU')['CANT'].sum().reset_index(name='ING_REALIZADO')
-    else:
-        ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTURO'])
-        ing_mes_act = pd.DataFrame(columns=['SKU', 'ING_REALIZADO'])
+    # --- 4. PROCESAMIENTO ---
+    ing_mes_act = ing_raw[ing_raw['MES'] == f_mes].groupby('SKU')['CANT'].sum().reset_index(name='ING_REALIZADO')
+    ing_futuro_full = ing_raw[ing_raw['MES'] > f_mes].copy()
+    ing_futuro_agg = ing_futuro_full.groupby('SKU')['CANT'].sum().reset_index(name='ING_FUTURO')
 
-    # --- 5. FILTRADO DE VENTAS Y STOCK ---
     so_f = so_raw[so_raw['MES'] == f_mes]
     stk_f = stk_raw[stk_raw['MES'] == f_mes]
-    
+    stk_f['TIPO'] = stk_f['CLIENTE_UP'].apply(lambda x: 'DASS' if 'DASS' in str(x) else 'CLIENTE')
+
     if f_dis:
         skus_dis = df_ma[df_ma['DISCIPLINA'].isin(f_dis)]['SKU']
         so_f = so_f[so_f['SKU'].isin(skus_dis)]
         stk_f = stk_f[stk_f['SKU'].isin(skus_dis)]
-    
-    if search:
-        so_f = so_f[so_f['SKU'].contains(search)]
 
-    # --- 6. KPIs ---
-    st.title(f"Dashboard Fila - {f_mes}")
+    # --- 5. KPIs ---
+    st.title(f"📊 Dashboard Performance - {f_mes}")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ventas (SO)", f"{so_f['CANT'].sum():,.0f}")
+    c1.metric("Venta Mes", f"{so_f['CANT'].sum():,.0f}")
     c2.metric("Stock Total", f"{stk_f['CANT'].sum():,.0f}")
-    c3.metric("Ingresos del Mes", f"{ing_mes_act['ING_REALIZADO'].sum():,.0f}")
-    c4.metric("Ingresos Futuros", f"{ing_futuros['ING_FUTURO'].sum():,.0f}")
+    c3.metric("Ingresos Mes", f"{ing_mes_act['ING_REALIZADO'].sum():,.0f}")
+    c4.metric("Ingresos Futuros", f"{ing_futuro_agg['ING_FUTURO'].sum():,.0f}")
 
-    # --- 7. GRÁFICO: LÍNEA DE TIEMPO ---
-    st.subheader("Evolución Histórica")
+    # --- 6. EVOLUCIÓN (HISTÓRICO) ---
+    st.subheader("📈 3. Evolución Histórica")
     h_so = so_raw.groupby('MES')['CANT'].sum().reset_index()
-    h_ing = ing_raw.groupby('MES')['CANT'].sum().reset_index()
+    h_ing = ing_raw.groupby('MES')['CANT'].sum().reset_index() if not ing_raw.empty else pd.DataFrame(columns=['MES', 'CANT'])
+    
     fig_h = go.Figure()
-    fig_h.add_trace(go.Scatter(x=h_so['MES'], y=h_so['CANT'], name="Ventas", line=dict(color="#0055A4", width=3)))
-    fig_h.add_trace(go.Bar(x=h_ing['MES'], y=h_ing['CANT'], name="Ingresos", marker_color="#FF3131", opacity=0.4))
+    fig_h.add_trace(go.Scatter(x=h_so['MES'], y=h_so['CANT'], name="Venta", line=dict(color="#0055A4", width=3)))
+    if not h_ing.empty:
+        fig_h.add_trace(go.Bar(x=h_ing['MES'], y=h_ing['CANT'], name="Ingresos", marker_color="#FF3131", opacity=0.4))
     st.plotly_chart(fig_h, use_container_width=True)
 
+    # --- 7. TABLA MAESTRA ---
+    st.divider()
+    st.subheader("📋 6-7. Detalle y Cobertura")
+    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='VENTA')
+    t_stk = stk_f.groupby(['SKU', 'TIPO'])['CANT'].sum().unstack(fill_value=0).reset_index()
+    for col in ['CLIENTE', 'DASS']: 
+        if col not in t_stk.columns: t_stk[col] = 0
+    
+    df_m = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(t_so, on='SKU', how='left')
+    df_m = df_m.merge(t_stk[['SKU', 'CLIENTE', 'DASS']], on='SKU', how='left')
+    df_m = df_m.merge(ing_futuro_agg, on='SKU', how='left').fillna(0)
+    df_m['COBERTURA'] = (df_m['CLIENTE'] / df_m['VENTA']).replace([float('inf')], 99).fillna(0)
+
+    st.dataframe(df_m.sort_values('VENTA', ascending=False), use_container_width=True, hide_index=True)
     # --- 8. GRÁFICOS: TORTAS ---
     st.divider()
     t1, t2, t3 = st.columns(3)
@@ -165,9 +180,23 @@ if data:
     st.write(f"Comparativo Posiciones: {f_mes} vs {m_ant}")
     st.dataframe(rk_table.sort_values('Pos_Actual').head(15), use_container_width=True, hide_index=True)
 
-    # --- 11. QUIEBRES (PUNTO 11) ---
+  # --- 11. QUIEBRES ---
     st.divider()
-    st.subheader("⚠️ Alertas de Quiebre")
-    quiebres = df_final[(df_final['VENTA'] > 0) & (df_final['STK_CLIENTE'] == 0)]
-    st.write("Productos con venta pero sin stock en cliente:")
+    st.subheader("⚠️ 11. SKUs en Quiebre")
+    quiebres = df_m[(df_m['VENTA'] > 0) & (df_m['CLIENTE'] == 0)]
     st.dataframe(quiebres[['SKU', 'DESCRIPCION', 'VENTA', 'ING_FUTURO']], use_container_width=True, hide_index=True)
+
+    # --- 12. CRONOGRAMA INGRESOS ---
+    st.divider()
+    st.subheader("🗓️ 12. Cronograma de Ingresos Futuros")
+    if not ing_futuro_full.empty:
+        st.dataframe(ing_futuro_full.groupby('MES')['CANT'].sum().reset_index(), use_container_width=True, hide_index=True)
+    else:
+        st.write("No hay ingresos programados posteriores a este mes.")
+
+    # --- 13. RESUMEN EJECUTIVO ---
+    st.divider()
+    st.subheader("🏢 13. Resumen Ejecutivo")
+    total_v = df_m['VENTA'].sum()
+    st.info(f"Resumen del periodo: Venta total de {total_v:,.0f} unidades con un stock en clientes de {df_m['CLIENTE'].sum():,.0f}.")
+
