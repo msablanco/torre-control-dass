@@ -165,8 +165,6 @@ else:
     st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura")
     st.dataframe(df_alerta.sort_values('Venta_Actual', ascending=False).head(10), use_container_width=True)
 
-else:
-    st.error("No se pudieron cargar los datos de Drive.")
 
     # --- 9. RANKINGS ---
     st.divider()
@@ -207,6 +205,7 @@ else:
 
 else:
     st.error("Sin conexión a Drive.")
+
 
 
 
