@@ -109,36 +109,22 @@ if data:
     si_f = apply_logic(si_raw, True, 'SI')
     stk_f = apply_logic(stk_raw, True, 'STK')
 
-    # --- 5. LÓGICA DE INGRESOS (INDEPENDIENTE DEL MES) ---
-    hoy_actual = pd.Timestamp(datetime.date.today()).replace(day=1)
+    # --- 5. LÓGICA DE INGRESOS (INDEPENDIENTE DEL FILTRO DE MES) ---
     if not ingresos_raw.empty:
+        # Los ingresos se filtran por disciplina/busqueda pero NO por el mes seleccionado en el sidebar
         df_ing_base = ingresos_raw.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'BUSQUEDA']], on='SKU', how='left')
         if f_dis: df_ing_base = df_ing_base[df_ing_base['DISCIPLINA'].isin(f_dis)]
         if f_fra: df_ing_base = df_ing_base[df_ing_base['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: df_ing_base = df_ing_base[df_ing_base['BUSQUEDA'].str.contains(search_query, na=False)]
-        # Sumamos todos los ingresos registrados que sean de hoy en adelante
-        t_futuro = df_ing_base[df_ing_base['FECHA_DT'] >= hoy_actual].groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
+        
+        t_futuro = df_ing_base.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
     else:
         t_futuro = pd.DataFrame(columns=['SKU', 'Futuros_Ingresos'])
 
-    # --- 6. LÍNEA DE TIEMPO ---
+    # --- 6. VISUALIZACIÓN ---
     st.title(f"📊 Dashboard Performance - {f_periodo}")
-    st.subheader("📈 Evolución Histórica")
-    h_so = apply_logic(so_raw, False, 'SO').groupby('MES')['CANT'].sum().reset_index(name='Sell Out')
-    h_si = apply_logic(si_raw, False, 'SI').groupby('MES')['CANT'].sum().reset_index(name='Sell In')
-    h_stk = apply_logic(stk_raw, False, 'STK').groupby(['MES', 'CLIENTE_UP'])['CANT'].sum().reset_index()
-    h_sd = h_stk[h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Dass')
-    h_sc = h_stk[~h_stk['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('MES')['CANT'].sum().reset_index(name='Stock Cliente')
-    df_hist = h_so.merge(h_si, on='MES', how='outer').merge(h_sd, on='MES', how='outer').merge(h_sc, on='MES', how='outer').fillna(0).sort_values('MES')
     
-    fig_line = go.Figure()
-    fig_line.add_trace(go.Scatter(x=df_hist['MES'], y=df_hist['Sell Out'], name='Sell Out', line=dict(color='#0055A4', width=4)))
-    fig_line.add_trace(go.Scatter(x=df_hist['MES'], y=df_hist['Sell In'], name='Sell In', line=dict(color='#FF3131', width=2, dash='dot')))
-    fig_line.add_trace(go.Bar(x=df_hist['MES'], y=df_hist['Stock Dass'], name='Stock Dass', marker_color='#00A693', opacity=0.5))
-    fig_line.add_trace(go.Bar(x=df_hist['MES'], y=df_hist['Stock Cliente'], name='Stock Cliente', marker_color='#FFD700', opacity=0.5))
-    st.plotly_chart(fig_line, use_container_width=True)
-
-    # --- 7. TABLA DETALLE PRINCIPAL (UNIFICADA) ---
+    # --- 7. TABLA DETALLE COMPLETA ---
     st.divider()
     st.subheader("📋 Detalle SKU: Stock, Venta e Ingresos Futuros")
     
@@ -156,15 +142,13 @@ if data:
     df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- 8. RANKINGS Y TENDENCIAS ---
+    # --- 8. RANKINGS ---
     st.divider()
-    st.subheader("🏆 Rankings y Saltos de Posición")
-    col_sel1, col_sel2 = st.columns(2)
-    with col_sel1: m_act = st.selectbox("Periodo Reciente (A)", meses_op, index=0, key="act")
-    with col_sel2: m_ant = st.selectbox("Periodo Anterior (B)", meses_op, index=min(1, len(meses_op)-1), key="ant")
-
-    rk_a = so_raw[so_raw['MES'] == m_act].groupby('SKU')['CANT'].sum().reset_index().assign(P_A=lambda x: x['CANT'].rank(ascending=False, method='min'))
-    rk_b = so_raw[so_raw['MES'] == m_ant].groupby('SKU')['CANT'].sum().reset_index().assign(P_B=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    st.subheader("🏆 Rankings y Tendencias")
+    m_ant_periodo = meses_op[min(1, len(meses_op)-1)]
+    
+    rk_a = so_raw[so_raw['MES'] == f_periodo].groupby('SKU')['CANT'].sum().reset_index().assign(P_A=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    rk_b = so_raw[so_raw['MES'] == m_ant_periodo].groupby('SKU')['CANT'].sum().reset_index().assign(P_B=lambda x: x['CANT'].rank(ascending=False, method='min'))
     
     df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'P_A', 'CANT']], on='SKU', how='inner')
     df_rank = df_rank.merge(rk_b[['SKU', 'P_B']], on='SKU', how='left').fillna({'P_B': 999})
@@ -172,7 +156,7 @@ if data:
     df_rank = df_rank.merge(t_futuro, on='SKU', how='left').fillna(0)
 
     top_actual = df_rank.sort_values('P_A').head(10).copy()
-    top_actual['Evolución'] = top_actual['Salto'].apply(lambda val: "🆕 Nuevo" if val > 500 else (f"⬆️ +{int(val)}" if val > 0 else (f"⬇️ {int(val)}" if val < 0 else "➡️ =")))
+    top_actual['Evolución'] = top_actual['Salto'].apply(lambda val: "🆕" if val > 500 else ("⬆️" if val > 0 else "⬇️"))
     st.dataframe(top_actual[['P_A', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución', 'Futuros_Ingresos']], use_container_width=True, hide_index=True)
 
     # --- 9. EXPLORADOR TÁCTICO ---
@@ -254,6 +238,7 @@ st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_wi
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
