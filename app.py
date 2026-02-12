@@ -18,11 +18,6 @@ COLOR_MAP_DIS = {
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
 
-COLOR_MAP_FRA = {
-    'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
-    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
-}
-
 # --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
@@ -57,7 +52,7 @@ if data:
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'FRANJA_PRECIO': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
+        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION']
@@ -76,53 +71,85 @@ if data:
 
     so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
-    # --- 4. FUNCIÓN STOCK POR PERIODO ---
-    def get_stk_por_periodo(df_stk, periodo_seleccionado):
-        if df_stk.empty: return df_stk
-        if periodo_seleccionado != "Todos":
-            df_p = df_stk[df_stk['MES'] == periodo_seleccionado].copy()
-            if not df_p.empty:
-                max_d = df_p['FECHA_DT'].max()
-                return df_p[df_p['FECHA_DT'] == max_d]
-        max_h = df_stk['FECHA_DT'].max()
-        return df_stk[df_stk['FECHA_DT'] == max_h]
-
-    # --- 5. FILTROS SIDEBAR ---
+    # --- 4. FILTROS SIDEBAR ---
     st.sidebar.header("🔍 Filtros Globales")
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
-    f_periodo = st.sidebar.selectbox("📅 Mes Principal", ["Todos"] + meses_op)
-    
-    opts_dis = sorted(df_ma['DISCIPLINA'].unique()) if not df_ma.empty else []
-    f_dis = st.sidebar.multiselect("👟 Disciplinas", opts_dis)
-    
-    opts_fra = sorted(df_ma['FRANJA_PRECIO'].unique()) if not df_ma.empty else []
-    f_fra = st.sidebar.multiselect("💰 Franjas", opts_fra)
-    f_cli_so = st.sidebar.multiselect("👤 Clientes", sorted(so_raw['CLIENTE_UP'].unique()) if not so_raw.empty else [])
+    f_periodo = st.sidebar.selectbox("📅 Mes Principal", meses_op if meses_op else ["S/D"])
 
-    # --- 6. LÓGICA DE FILTRADO ---
-    stk_snapshot = get_stk_por_periodo(stk_raw, f_periodo)
-
-    def apply_logic(df, filter_month=True, is_stock=False):
+    def apply_logic(df, filter_month=True):
         if df.empty: return df
         temp = df.copy()
-        temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
-        if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
-        if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
+        temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'BUSQUEDA']], on='SKU', how='left')
         if search_query:
-            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False) | temp['SKU'].str.contains(search_query, na=False)]
-        if not is_stock and filter_month and f_periodo != "Todos":
+            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
+        if filter_month and f_periodo != "Todos":
             temp = temp[temp['MES'] == f_periodo]
-        if f_cli_so:
-            temp = temp[temp['CLIENTE_UP'].isin(f_cli_so)]
         return temp
 
-    so_f = apply_logic(so_raw)
-    si_f = apply_logic(si_raw)
-    stk_f = apply_logic(stk_snapshot, is_stock=True)
+    # --- 5. LÓGICA DE RANKINGS E INTELIGENCIA ---
+    if len(meses_op) >= 2:
+        st.header("🏆 Inteligencia de Rankings y Tendencias")
+        
+        col_sel1, col_sel2 = st.columns(2)
+        with col_sel1:
+            m_actual = st.selectbox("Mes de Comparación (A)", meses_op, index=0)
+        with col_sel2:
+            m_anterior = st.selectbox("Mes Base (B)", meses_op, index=min(1, len(meses_op)-1))
 
-    val_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
-    val_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
+        # Cálculos de Ranking
+        def get_rank(mes):
+            return so_raw[so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index().assign(
+                Pos=lambda x: x['CANT'].rank(ascending=False, method='min')
+            )
+
+        rk_a = get_rank(m_actual)
+        rk_b = get_rank(m_anterior)
+
+        df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Pos', 'CANT']], on='SKU', how='inner')
+        df_rank = df_rank.merge(rk_b[['SKU', 'Pos']], on='SKU', how='left', suffixes=('_A', '_B')).fillna({'Pos_B': 999})
+        df_rank['Salto'] = df_rank['Pos_B'] - df_rank['Pos_A']
+
+        # Visualización Top 10
+        st.subheader(f"Top 10 Productos en {m_actual}")
+        top_10 = df_rank.sort_values('Pos_A').head(10).copy()
+        top_10['Tendencia'] = top_10['Salto'].apply(lambda v: f"⬆️ +{int(v)}" if v > 0 else (f"⬇️ {int(v)}" if v < 0 else "➡️ ="))
+        st.dataframe(top_10[['Pos_A', 'SKU', 'DESCRIPCION', 'CANT', 'Tendencia']], use_container_width=True, hide_index=True)
+
+        # --- 6. ALERTA DE QUIEBRE ---
+        st.divider()
+        st.subheader(f"🚨 Alerta de Quiebre (Basado en {m_actual})")
+        
+        # Obtener Stock más reciente
+        stk_f = stk_raw[stk_raw['FECHA_DT'] == stk_raw['FECHA_DT'].max()]
+        t_stk = stk_f.groupby('SKU')['CANT'].sum().reset_index(name='Stock_Total')
+        
+        df_alerta = df_rank.merge(t_stk, on='SKU', how='left').fillna(0)
+        df_alerta['MOS'] = df_alerta.apply(lambda x: x['Stock_Total'] / x['CANT'] if x['CANT'] > 0 else 0, axis=1)
+
+        def definir_semaforo(r):
+            if r['CANT'] == 0: return '🟢 OK'
+            if r['MOS'] < 1.0: return '🔴 CRÍTICO: < 1 Mes'
+            if r['MOS'] < 2.0: return '🟡 ADVERTENCIA: < 2 Meses'
+            return '🟢 OK'
+
+        df_alerta['Estado'] = df_alerta.apply(definir_semaforo, axis=1)
+        df_riesgo = df_alerta[df_alerta['Estado'].str.contains('🔴|🟡')].sort_values('MOS')
+
+        if not df_riesgo.empty:
+            st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'CANT', 'Stock_Total', 'MOS']]
+                         .rename(columns={'CANT': 'Venta Mes', 'MOS': 'Meses Cobertura'}), 
+                         use_container_width=True, hide_index=True)
+        
+        st.plotly_chart(px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS', size='CANT', color='Estado', 
+                                   hover_name='DESCRIPCION', title="Velocidad vs Cobertura",
+                                   color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK': '#28a745'}), 
+                        use_container_width=True)
+    else:
+        st.info("Se necesitan al menos 2 meses de datos para generar comparativas y alertas.")
+
+else:
+    st.error("No se detectaron archivos válidos en Google Drive.")
 
     # --- 7. DASHBOARD VISUAL ---
     st.divider()
@@ -327,6 +354,7 @@ else:
                              title="Velocidad (Salto Ranking) vs Cobertura (MOS)",
                              color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745', '🟢 OK: Sin Venta': '#28a745'})
         st.plotly_chart(fig_mos, use_container_width=True)
+
 
 
 
