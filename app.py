@@ -119,21 +119,22 @@ if data:
     so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
 
 # --- 6. STOCK EN CLIENTES (Wholesale) ---
-    # Solo entramos si el dataframe de stock existe
+    # Verificamos que el dataframe de stock haya sido cargado correctamente
     if 'df_stk_snap' in locals() and df_stk_snap is not None:
         
-        # Filtramos el stock por los SKUs que están en el maestro filtrado (sidebar)
-        df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
+        # FILTRADO DINÁMICO: Cruza el stock real con el maestro filtrado por la sidebar
+        # Esto hace que el gráfico responda a Disciplina, Franja, Género, etc.
+        df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])].copy()
         
-        # Calculamos el total de unidades de forma segura
-        unidades_stock = df_stk_f['CANT'].sum() if not df_stk_f.empty else 0
+        # Calculamos el total de unidades de forma segura para la validación
+        total_unidades_stk = df_stk_f['CANT'].sum() if not df_stk_f.empty else 0
 
-        # CONDICIÓN: Solo mostrar si hay stock (evita el NameError y oculta si es 0)
-        if unidades_stock > 0:
+        # CONDICIÓN: Solo mostramos la sección si hay unidades mayores a 0
+        if total_unidades_stk > 0:
             st.divider()
             st.subheader("📦 Stock en Clientes (Wholesale)")
             
-            # Unimos con el maestro filtrado para obtener Disciplina y Franja
+            # Unimos para traer etiquetas de DISCIPLINA y FRANJA desde el maestro filtrado
             df_stk_vis = pd.merge(
                 df_stk_f, 
                 df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], 
@@ -144,6 +145,7 @@ if data:
             col_st1, col_st2 = st.columns(2)
 
             with col_st1:
+                # Stock por Disciplina (Responde a los filtros)
                 stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
                 fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
                                      title="Stock por Disciplina",
@@ -151,12 +153,13 @@ if data:
                 st.plotly_chart(fig_stk_dis, use_container_width=True)
 
             with col_st2:
+                # Stock por Franja (Responde a los filtros)
                 stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
                 fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
                                      title="Stock por Franja",
                                      color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
                 st.plotly_chart(fig_stk_fra, use_container_width=True)
-    # Si unidades_stock es 0 o df_stk_snap no existe, no se muestra nada.
+    # Si total_unidades_stk <= 0 o la variable no existe, la app salta esta parte y no muestra nada.
         
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -290,6 +293,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
