@@ -206,26 +206,37 @@ if data:
     fig_h.add_trace(go.Scatter(x=df_h['MES'], y=df_h['Sell In'], name='Sell In', line=dict(color='#FF3131', width=3, dash='dot')))
     st.plotly_chart(fig_h, use_container_width=True)
 
-    # --- 10. DETALLE POR SKU ---
+   # --- 10. DETALLE POR SKU (DINÁMICO) ---
     st.divider()
     st.subheader("📋 Detalle por SKU")
+    
+    # Recalculamos tablas de stock específicamente para el reporte
+    t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
+    t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
     t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
     t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
-    t_stk_f = stk_f.groupby('SKU')['CANT'].sum().reset_index(name='Stock_Actual')
     
-    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_stk_f, on='SKU', how='left').merge(t_si, on='SKU', how='left').fillna(0)
-    df_final = df_final[(df_final['Sell Out'] > 0) | (df_final['Stock_Actual'] > 0) | (df_final['Sell In'] > 0)]
+    # Unión maestra de datos filtrados
+    df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
+                .merge(t_stk_c, on='SKU', how='left') \
+                .merge(t_stk_d, on='SKU', how='left') \
+                .merge(t_si, on='SKU', how='left').fillna(0)
+    
+    df_final = df_final[(df_final['Sell Out'] > 0) | (df_final['Stock Cliente'] > 0) | (df_final['Stock Dass'] > 0) | (df_final['Sell In'] > 0)]
     st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
 
-    # --- 11. RANKINGS ---
+    # --- 11. RANKINGS E INTELIGENCIA ---
     if len(meses_op) >= 2:
         st.divider()
-        st.header("🏆 Inteligencia de Rankings")
-        mes_actual = meses_op[0]
-        mes_anterior = meses_op[1]
+        st.header("🏆 Inteligencia de Rankings y Tendencias")
+        
+        # Usamos los meses seleccionados o los más recientes
+        m_actual = f_periodo if f_periodo != "Todos" else meses_op[0]
+        idx_ant = meses_op.index(m_actual) + 1 if m_actual in meses_op and meses_op.index(m_actual) + 1 < len(meses_op) else 0
+        m_anterior = meses_op[idx_ant]
 
-        rank_a = so_raw[so_raw['MES'] == mes_actual].groupby('SKU')['CANT'].sum().reset_index()
-        rank_b = so_raw[so_raw['MES'] == mes_anterior].groupby('SKU')['CANT'].sum().reset_index()
+        rank_a = so_raw[so_raw['MES'] == m_actual].groupby('SKU')['CANT'].sum().reset_index()
+        rank_b = so_raw[so_raw['MES'] == m_anterior].groupby('SKU')['CANT'].sum().reset_index()
         rank_a['Puesto_A'] = rank_a['CANT'].rank(ascending=False, method='min')
         rank_b['Puesto_B'] = rank_b['CANT'].rank(ascending=False, method='min')
 
@@ -233,57 +244,38 @@ if data:
         df_rank = df_rank.merge(rank_b[['SKU', 'Puesto_B']], on='SKU', how='left').fillna({'Puesto_B': 999})
         df_rank['Salto'] = df_rank['Puesto_B'] - df_rank['Puesto_A']
 
-        st.subheader(f"🔥 Top 10 Ventas {mes_actual}")
-        st.dataframe(df_rank.sort_values('Puesto_A').head(10), use_container_width=True, hide_index=True)
+        # --- 13. ALERTA DE QUIEBRE REPARADA ---
+        st.divider()
+        st.subheader(f"🚨 Alerta de Quiebre (Basado en {m_actual})")
+        
+        # Unimos Rankings con Stock Recalculado
+        df_alerta = df_rank.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
+        df_alerta['Stock_Total'] = df_alerta['Stock Dass'] + df_alerta['Stock Cliente']
+        
+        # Evitar división por cero en MOS
+        df_alerta['MOS_Proyectado'] = df_alerta.apply(lambda r: r['Stock_Total'] / r['CANT'] if r['CANT'] > 0 else 0, axis=1)
 
-    # --- 12. EXPLORADOR TÁCTICO POR DISCIPLINA ---
-    st.divider()
-    st.subheader("👟 Explorador Táctico por Disciplina")
-    disciplinas_disponibles = sorted(df_rank['DISCIPLINA'].unique())
-    disciplina_select = st.selectbox("Seleccioná una Disciplina para profundizar:", disciplinas_disponibles)
-    df_rank_dis = df_rank[df_rank['DISCIPLINA'] == disciplina_select].copy()
-    df_rank_dis['Pos_Categoría'] = df_rank_dis['CANT'].rank(ascending=False, method='min')
+        def definir_semaforo(row):
+            if row['CANT'] == 0: return '🟢 OK: Sin Venta'
+            if row['MOS_Proyectado'] < 1.0: return '🔴 CRÍTICO: < 1 Mes'
+            if row['MOS_Proyectado'] < 2.0: return '🟡 ADVERTENCIA: < 2 Meses'
+            return '🟢 OK: Stock Suficiente'
 
-    col_l1, col_l2 = st.columns([2, 1])
-    with col_l1:
-        st.markdown(f"**Top 10 de {disciplina_select}**")
-        df_dis_show = df_rank_dis.sort_values('Pos_Categoría').head(10).copy()
-        df_dis_show['Evolución'] = df_dis_show['Salto'].apply(lambda x: "🔥 Nuevo" if x > 500 else (f"🔼 +{int(x)}" if x > 0 else (f"🔽 {int(x)}" if x < 0 else "⏺️ =")))
-        st.dataframe(df_dis_show[['Pos_Categoría', 'SKU', 'DESCRIPCION', 'CANT', 'Evolución']], use_container_width=True, hide_index=True)
-    with col_l2:
-        st.metric(f"Total {disciplina_select}", f"{df_rank_dis['CANT'].sum():,.0f}")
-        fig_mini = px.bar(df_dis_show.head(5), x='CANT', y='SKU', orientation='h', color_discrete_sequence=[COLOR_MAP_DIS.get(disciplina_select, '#0055A4')], text_auto='.2s')
-        fig_mini.update_layout(height=250, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
-        st.plotly_chart(fig_mini, use_container_width=True)
+        df_alerta['Estado'] = df_alerta.apply(definir_semaforo, axis=1)
+        df_riesgo = df_alerta[df_alerta['Estado'].str.contains('🔴|🟡')].sort_values('MOS_Proyectado')
 
-    # --- 13. ALERTA DE QUIEBRE Y MOS ---
-    st.divider()
-    st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura Mensual (MOS)")
-    df_alerta = df_rank.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
-    df_alerta['Stock_Total'] = df_alerta['Stock Dass'] + df_alerta['Stock Cliente']
-    df_alerta['MOS_Proyectado'] = (df_alerta['Stock_Total'] / df_alerta['CANT']).replace([float('inf'), -float('inf')], 0).fillna(0)
-
-    def definir_semaforo_mensual(row):
-        if row['Salto'] >= 5 and row['MOS_Proyectado'] < 1.0 and row['CANT'] > 0: return '🔴 CRÍTICO: < 1 Mes'
-        elif row['Salto'] > 0 and row['MOS_Proyectado'] < 2.0 and row['CANT'] > 0: return '🟡 ADVERTENCIA: < 2 Meses'
-        else: return '🟢 OK: Stock Suficiente'
-
-    df_alerta['Estado'] = df_alerta.apply(definir_semaforo_mensual, axis=1)
-    df_riesgo = df_alerta[df_alerta['Estado'] != '🟢 OK: Stock Suficiente'].sort_values(['Salto', 'MOS_Proyectado'], ascending=[False, True])
-
-    if not df_riesgo.empty:
-        st.warning(f"Se detectaron {len(df_riesgo)} productos en riesgo de quiebre.")
-        st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'DISCIPLINA', 'Salto', 'CANT', 'MOS_Proyectado']].rename(columns={'Salto': 'Puestos Subidos', 'CANT': 'Venta Mes', 'MOS_Proyectado': 'Meses Stock'}), use_container_width=True, hide_index=True)
-        csv = df_riesgo.to_csv(index=False).encode('utf-8')
-        st.download_button(label="📥 Descargar Lista de Reposición (CSV)", data=csv, file_name=f'reposicion_{mes_actual}.csv', mime='text/csv')
-
-    fig_mos = px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS_Proyectado', size='CANT', color='Estado', hover_name='DESCRIPCION', title="Mapa de Velocidad vs Cobertura (MOS)", color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745'})
-    fig_mos.add_hline(y=1.0, line_dash="dot", line_color="red", annotation_text="Peligro: < 1 Mes")
-    fig_mos.add_hline(y=2.0, line_dash="dot", line_color="orange", annotation_text="Alerta: < 2 Meses")
-    st.plotly_chart(fig_mos, use_container_width=True)
-
-else:
-    st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+        if not df_riesgo.empty:
+            st.warning(f"Se detectaron {len(df_riesgo)} SKUs con stock insuficiente para la velocidad de venta de {m_actual}.")
+            st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'CANT', 'Stock_Total', 'MOS_Proyectado']]
+                         .rename(columns={'CANT': 'Venta Mes', 'Stock_Total': 'Stock Disp.', 'MOS_Proyectado': 'Meses Cobertura'}), 
+                         use_container_width=True, hide_index=True)
+        
+        # Mapa Visual de Quiebre
+        fig_mos = px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS_Proyectado', 
+                             size='CANT', color='Estado', hover_name='DESCRIPCION',
+                             title="Velocidad (Salto Ranking) vs Cobertura (MOS)",
+                             color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745', '🟢 OK: Sin Venta': '#28a745'})
+        st.plotly_chart(fig_mos, use_container_width=True)
 
 
 
