@@ -213,8 +213,7 @@ if data:
         fig_mini.update_layout(height=250, margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
         st.plotly_chart(fig_mini, use_container_width=True)
 
-  else:
-    st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+  
 
 
 
