@@ -52,7 +52,7 @@ def load_data():
 data = load_data()
 
 if data:
-    # --- 3. PROCESAMIENTO ---
+    # --- 3. PROCESAMIENTO MAESTRO ---
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -78,67 +78,120 @@ if data:
 
     # --- 4. FILTROS SIDEBAR ---
     st.sidebar.header("🔍 Filtros Globales")
-    search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
+    search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo").upper()
     meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
-    f_periodo = st.sidebar.selectbox("📅 Mes Principal", meses_op if meses_op else ["S/D"])
+    f_periodo = st.sidebar.selectbox("📅 Seleccionar Mes", meses_op if meses_op else ["S/D"])
     
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['DISCIPLINA'].unique()))
     f_fra = st.sidebar.multiselect("💰 Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
-    f_cli_so = st.sidebar.multiselect("👤 Cliente SO", sorted(so_raw['CLIENTE_UP'].unique()))
-    f_cli_si = st.sidebar.multiselect("📦 Cliente SI", sorted(si_raw['CLIENTE_UP'].unique()))
+    f_cli_so = st.sidebar.multiselect("👤 Clientes Sell Out", sorted(so_raw['CLIENTE_UP'].unique()))
 
-    # --- 5. LÓGICA DE FILTRADO ---
+    # --- 5. LÓGICA DE FILTRADO DINÁMICO ---
     def apply_logic(df, filter_month=True, tipo=None):
         if df.empty: return df
-        temp = df.copy()
-        temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
+        temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
         if filter_month: temp = temp[temp['MES'] == f_periodo]
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
-        if search_query: 
-            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False) | temp['SKU'].str.contains(search_query, na=False)]
+        if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
         if tipo == 'SO' and f_cli_so: temp = temp[temp['CLIENTE_UP'].isin(f_cli_so)]
-        if tipo == 'SI' and f_cli_si: temp = temp[temp['CLIENTE_UP'].isin(f_cli_si)]
         return temp
 
     so_f = apply_logic(so_raw, True, 'SO')
-    si_f = apply_logic(si_raw, True, 'SI')
+    si_f = apply_logic(si_raw, True)
     stk_f = apply_logic(stk_raw, True)
 
-    # --- 6. KPIs ---
-    st.title(f"🚀 Dashboard Performance - {f_periodo}")
+    # --- 6. KPIs Y GRÁFICOS (DISCIPLINA Y FRANJA) ---
+    st.title(f"📊 Dashboard Performance & Inteligencia - {f_periodo}")
+    
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out", f"{so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In", f"{si_f['CANT'].sum():,.0f}")
+    k1.metric("Sell Out Pares", f"{so_f['CANT'].sum():,.0f}")
+    k2.metric("Sell In Pares", f"{si_f['CANT'].sum():,.0f}")
     val_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
-    k3.metric("Stock Dass", f"{val_d:,.0f}")
+    k3.metric("Stock en Dass", f"{val_d:,.0f}")
     val_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
-    k4.metric("Stock Cliente", f"{val_c:,.0f}")
+    k4.metric("Stock en Clientes", f"{val_c:,.0f}")
 
-    # --- 7. ANÁLISIS POR DISCIPLINA ---
+    # Fila de Disciplina
     st.divider()
-    st.subheader("👟 Distribución por Disciplina")
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    with c1:
-        st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with c2:
-        st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with c3:
-        st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with c4:
-        st.plotly_chart(px.bar(si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='DISCIPLINA', title="Sell In por Disciplina", color_discrete_map=COLOR_MAP_DIS, text_auto='.2s'), use_container_width=True)
+    c1, c2, c3 = st.columns(3)
+    with c1: st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+    with c2: st.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
+    with c3: st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
-    # --- 8. ANÁLISIS POR FRANJA ---
-    st.subheader("💰 Distribución por Franja de Precio")
-    f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
-    with f1:
-        st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    with f2:
-        st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    with f3:
-        st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
-    with f4:
-        st.plotly_chart(px.bar(si_f.groupby(['MES', 'FRANJA_PRECIO'])['CANT'].sum().reset_index(), x='MES', y='CANT', color='FRANJA_PRECIO', title="Sell In por Franja", color_discrete_map=COLOR_MAP_FRA, text_auto='.2s'), use_container_width=True)
+    # Fila de Franja de Precio
+    f1, f2, f3 = st.columns(3)
+    with f1: st.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Dass (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with f2: st.plotly_chart(px.pie(so_f.groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Sell Out (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+    with f3: st.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('FRANJA_PRECIO')['CANT'].sum().reset_index(), values='CANT', names='FRANJA_PRECIO', title="Stock Cliente (Franja)", color='FRANJA_PRECIO', color_discrete_map=COLOR_MAP_FRA), use_container_width=True)
+
+    # --- 7. TABLA DETALLE POR SKU (SOLICITADA) ---
+    st.divider()
+    st.subheader("📋 Detalle de Inventario y Ventas por SKU")
+    
+    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
+    t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
+    t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Clientes')
+    
+    # Simulación de Futuros Ingresos (si no existe la columna, se deja en 0)
+    t_futuro = si_raw[si_raw['FECHA_DT'] > pd.to_datetime('today')].groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
+
+    df_detalle = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_si, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_futuro, on='SKU', how='left').fillna(0)
+    
+    # Cálculo de Rotación (Stock Clientes / Sell Out)
+    df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
+    
+    st.dataframe(df_detalle[df_detalle['Sell_Out'] + df_detalle['Stock_Clientes'] > 0].sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
+
+    # --- 8. RANKINGS Y TENDENCIAS ---
+    st.divider()
+    st.subheader("🏆 Rankings y Saltos de Posición")
+    c_rk1, c_rk2 = st.columns(2)
+    with c_rk1: m_act = st.selectbox("Mes Actual", meses_op, index=0, key="act")
+    with c_rk2: m_ant = st.selectbox("Mes Anterior", meses_op, index=min(1, len(meses_op)-1), key="ant")
+
+    rk_a = so_raw[so_raw['MES'] == m_act].groupby('SKU')['CANT'].sum().reset_index().assign(Puesto_A=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    rk_b = so_raw[so_raw['MES'] == m_ant].groupby('SKU')['CANT'].sum().reset_index().assign(Puesto_B=lambda x: x['CANT'].rank(ascending=False, method='min'))
+    
+    df_tendencia = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Puesto_A', 'CANT']], on='SKU', how='inner').merge(rk_b[['SKU', 'Puesto_B']], on='SKU', how='left').fillna({'Puesto_B': 999})
+    df_tendencia['Salto'] = df_tendencia['Puesto_B'] - df_tendencia['Puesto_A']
+    
+    st.dataframe(df_tendencia.sort_values('Puesto_A').head(10), use_container_width=True, hide_index=True)
+
+    # --- 9. ALERTA DE QUIEBRE CON SEMÁFORO (SOLICITADA) ---
+    st.divider()
+    st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura (MOS)")
+    
+    df_mos = df_tendencia.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
+    df_mos['Stock_Total'] = df_mos['Stock_Dass'] + df_mos['Stock_Clientes']
+    df_mos['Meses_Cobertura'] = (df_mos['Stock_Total'] / df_mos['CANT']).replace([float('inf')], 0).fillna(0)
+
+    def semaforo_logic(row):
+        if row['Salto'] >= 5 and row['Meses_Cobertura'] < 1 and row['CANT'] > 0: return '🔴 CRÍTICO'
+        if row['Salto'] > 0 and row['Meses_Cobertura'] < 2 and row['CANT'] > 0: return '🟡 ADVERTENCIA'
+        return '🟢 OK'
+
+    df_mos['Estado'] = df_mos.apply(semaforo_logic, axis=1)
+    
+    # Mostrar tabla con semáforos
+    df_riesgo = df_mos[df_mos['Estado'] != '🟢 OK'].sort_values(['Salto', 'Meses_Cobertura'], ascending=[False, True])
+    
+    if not df_riesgo.empty:
+        st.warning(f"Se detectaron {len(df_riesgo)} SKUs con riesgo de quiebre inminente.")
+        st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'CANT', 'Salto', 'Meses_Cobertura']].rename(columns={'CANT': 'Venta Mes', 'Salto': 'Puestos Subidos', 'Meses_Cobertura': 'Meses Stock'}), use_container_width=True, hide_index=True)
+        
+        # Botón de descarga
+        csv = df_riesgo.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar Reporte de Quiebre", data=csv, file_name=f"alerta_quiebre_{f_periodo}.csv", mime="text/csv")
+    else:
+        st.success("No se detectan productos en situación crítica para los filtros seleccionados.")
+
+    # Mapa de calor Visual
+    st.plotly_chart(px.scatter(df_mos[df_mos['CANT'] > 0], x='Salto', y='Meses_Cobertura', size='CANT', color='Estado', hover_name='DESCRIPCION', color_discrete_map={'🔴 CRÍTICO': '#ff4b4b', '🟡 ADVERTENCIA': '#ffa500', '🟢 OK': '#28a745'}), use_container_width=True)
+
+else:
+    st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")2s'), use_container_width=True)
 
     # --- 9. EVOLUCIÓN HISTÓRICA ---
     st.divider()
@@ -214,6 +267,7 @@ if data:
         st.plotly_chart(fig_mini, use_container_width=True)
 
   
+
 
 
 
