@@ -18,6 +18,11 @@ COLOR_MAP_DIS = {
     'SIN CATEGORIA': '#D3D3D3', 'OTRO': '#E5E5E5'
 }
 
+COLOR_MAP_FRA = {
+    'PINNACLE': '#4B0082', 'BEST': '#1E90FF', 'BETTER': '#32CD32', 
+    'GOOD': '#FF8C00', 'CORE': '#696969', 'SIN CATEGORIA': '#D3D3D3'
+}
+
 # --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_data():
@@ -52,7 +57,7 @@ if data:
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
         df_ma = df_ma.drop_duplicates(subset=['SKU'])
-        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
+        for col, default in {'DISCIPLINA': 'SIN CATEGORIA', 'FRANJA_PRECIO': 'SIN CATEGORIA', 'DESCRIPCION': 'SIN DESCRIPCION'}.items():
             if col not in df_ma.columns: df_ma[col] = default
             df_ma[col] = df_ma[col].fillna(default).astype(str).str.upper()
         df_ma['BUSQUEDA'] = df_ma['SKU'] + " " + df_ma['DESCRIPCION']
@@ -76,96 +81,85 @@ if data:
     search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
     meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
     f_periodo = st.sidebar.selectbox("📅 Mes Principal", meses_op if meses_op else ["S/D"])
+    
+    # --- 5. DASHBOARD PRINCIPAL (MIX) ---
+    st.divider()
+    st.subheader("📊 Análisis de Mix y Evolución")
+    
+    # Cálculos para visualización rápida
+    stk_snapshot = stk_raw[stk_raw['FECHA_DT'] == stk_raw['FECHA_DT'].max()] if not stk_raw.empty else pd.DataFrame()
+    
+    # Unimos con maestro para colores
+    if not stk_snapshot.empty:
+        stk_snapshot = stk_snapshot.merge(df_ma[['SKU', 'DISCIPLINA']], on='SKU', how='left').fillna('SIN CATEGORIA')
+        fig_stk = px.pie(stk_snapshot.groupby('DISCIPLINA')['CANT'].sum().reset_index(), 
+                         values='CANT', names='DISCIPLINA', title="Distribución de Stock Total",
+                         color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+        st.plotly_chart(fig_stk, use_container_width=True)
 
-    def apply_logic(df, filter_month=True):
-        if df.empty: return df
-        temp = df.copy()
-        temp = temp.merge(df_ma[['SKU', 'DISCIPLINA', 'BUSQUEDA']], on='SKU', how='left')
-        if search_query:
-            temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
-        if filter_month and f_periodo != "Todos":
-            temp = temp[temp['MES'] == f_periodo]
-        return temp
-
-    # --- 5. LÓGICA DE RANKINGS E INTELIGENCIA ---
+    # --- 6. INTELIGENCIA DE RANKINGS Y QUIEBRE ---
     if len(meses_op) >= 2:
+        st.divider()
         st.header("🏆 Inteligencia de Rankings y Tendencias")
         
-        col_sel1, col_sel2 = st.columns(2)
-        with col_sel1:
-            m_actual = st.selectbox("Mes de Comparación (A)", meses_op, index=0)
-        with col_sel2:
-            m_anterior = st.selectbox("Mes Base (B)", meses_op, index=min(1, len(meses_op)-1))
+        c_sel1, c_sel2 = st.columns(2)
+        with c_sel1:
+            m_actual = st.selectbox("Mes Actual (A)", meses_op, index=0)
+        with c_sel2:
+            m_anterior = st.selectbox("Mes Anterior (B)", meses_op, index=min(1, len(meses_op)-1))
 
-        # Cálculos de Ranking
-        def get_rank(mes):
-            return so_raw[so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index().assign(
-                Pos=lambda x: x['CANT'].rank(ascending=False, method='min')
-            )
+        # Función de Ranking
+        def get_ranking(mes):
+            df = so_raw[so_raw['MES'] == mes].groupby('SKU')['CANT'].sum().reset_index()
+            df['Pos'] = df['CANT'].rank(ascending=False, method='min')
+            return df
 
-        rk_a = get_rank(m_actual)
-        rk_b = get_rank(m_anterior)
+        rk_a = get_ranking(m_actual)
+        rk_b = get_ranking(m_anterior)
 
-        df_rank = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Pos', 'CANT']], on='SKU', how='inner')
-        df_rank = df_rank.merge(rk_b[['SKU', 'Pos']], on='SKU', how='left', suffixes=('_A', '_B')).fillna({'Pos_B': 999})
-        df_rank['Salto'] = df_rank['Pos_B'] - df_rank['Pos_A']
+        # Merge de Tendencia
+        df_tend = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA']].merge(rk_a[['SKU', 'Pos', 'CANT']], on='SKU', how='inner')
+        df_tend = df_tend.merge(rk_b[['SKU', 'Pos']], on='SKU', how='left', suffixes=('_A', '_B')).fillna({'Pos_B': 999})
+        df_tend['Salto'] = df_tend['Pos_B'] - df_tend['Pos_A']
 
-        # Visualización Top 10
         st.subheader(f"Top 10 Productos en {m_actual}")
-        top_10 = df_rank.sort_values('Pos_A').head(10).copy()
-        top_10['Tendencia'] = top_10['Salto'].apply(lambda v: f"⬆️ +{int(v)}" if v > 0 else (f"⬇️ {int(v)}" if v < 0 else "➡️ ="))
-        st.dataframe(top_10[['Pos_A', 'SKU', 'DESCRIPCION', 'CANT', 'Tendencia']], use_container_width=True, hide_index=True)
+        st.dataframe(df_tend.sort_values('Pos_A').head(10)[['Pos_A', 'SKU', 'DESCRIPCION', 'CANT', 'Salto']], use_container_width=True, hide_index=True)
 
-        # --- 6. ALERTA DE QUIEBRE ---
+        # --- 7. ALERTA DE QUIEBRE ---
         st.divider()
-        st.subheader(f"🚨 Alerta de Quiebre (Basado en {m_actual})")
+        st.subheader(f"🚨 Alerta de Quiebre (Velocidad vs Stock)")
         
-        # Obtener Stock más reciente
-        stk_f = stk_raw[stk_raw['FECHA_DT'] == stk_raw['FECHA_DT'].max()]
-        t_stk = stk_f.groupby('SKU')['CANT'].sum().reset_index(name='Stock_Total')
+        # Stock actual consolidado
+        t_stk = stk_snapshot.groupby('SKU')['CANT'].sum().reset_index(name='Stock_Total')
+        df_alerta = df_tend.merge(t_stk, on='SKU', how='left').fillna(0)
         
-        df_alerta = df_rank.merge(t_stk, on='SKU', how='left').fillna(0)
+        # MOS (Months of Stock)
         df_alerta['MOS'] = df_alerta.apply(lambda x: x['Stock_Total'] / x['CANT'] if x['CANT'] > 0 else 0, axis=1)
 
-        def definir_semaforo(r):
+        def semaforo(r):
             if r['CANT'] == 0: return '🟢 OK'
-            if r['MOS'] < 1.0: return '🔴 CRÍTICO: < 1 Mes'
-            if r['MOS'] < 2.0: return '🟡 ADVERTENCIA: < 2 Meses'
+            if r['MOS'] < 1.0: return '🔴 CRÍTICO'
+            if r['MOS'] < 2.0: return '🟡 ADVERTENCIA'
             return '🟢 OK'
 
-        df_alerta['Estado'] = df_alerta.apply(definir_semaforo, axis=1)
-        df_riesgo = df_alerta[df_alerta['Estado'].str.contains('🔴|🟡')].sort_values('MOS')
-
-        if not df_riesgo.empty:
-            st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'CANT', 'Stock_Total', 'MOS']]
-                         .rename(columns={'CANT': 'Venta Mes', 'MOS': 'Meses Cobertura'}), 
-                         use_container_width=True, hide_index=True)
+        df_alerta['Estado'] = df_alerta.apply(semaforo, axis=1)
         
-        st.plotly_chart(px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS', size='CANT', color='Estado', 
-                                   hover_name='DESCRIPCION', title="Velocidad vs Cobertura",
-                                   color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK': '#28a745'}), 
-                        use_container_width=True)
+        df_riesgo = df_alerta[df_alerta['Estado'] != '🟢 OK'].sort_values('MOS')
+        if not df_riesgo.empty:
+            st.warning(f"Se detectaron {len(df_riesgo)} SKUs con riesgo de stock.")
+            st.dataframe(df_riesgo[['Estado', 'SKU', 'DESCRIPCION', 'CANT', 'Stock_Total', 'MOS']], use_container_width=True, hide_index=True)
+
+        # Mapa de Calor
+        fig_mapa = px.scatter(df_alerta[df_alerta['CANT'] > 0], x='Salto', y='MOS', size='CANT', color='Estado', 
+                              hover_name='DESCRIPCION', title="Mapa de Velocidad de Venta vs Cobertura",
+                              color_discrete_map={'🔴 CRÍTICO': '#FF4B4B', '🟡 ADVERTENCIA': '#FFA500', '🟢 OK': '#28A745'})
+        st.plotly_chart(fig_mapa, use_container_width=True)
+
     else:
-        st.info("Se necesitan al menos 2 meses de datos para generar comparativas y alertas.")
+        st.info("Cargue más meses de datos para habilitar el análisis de tendencias y quiebre.")
 
 else:
-    st.error("No se detectaron archivos válidos en Google Drive.")
-
-    # --- 7. DASHBOARD VISUAL ---
-    st.divider()
-    st.subheader("📌 Análisis de Mix por Disciplina")
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-    
-    if val_d > 0:
-        c1.plotly_chart(px.pie(stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Dass", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if not so_f.empty:
-        c2.plotly_chart(px.pie(so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Sell Out", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if val_c > 0:
-        c3.plotly_chart(px.pie(stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index(), values='CANT', names='DISCIPLINA', title="Stock Cliente", color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    if not si_f.empty:
-        df_bar_dis = si_f.groupby(['MES', 'DISCIPLINA'])['CANT'].sum().reset_index()
-        c4.plotly_chart(px.bar(df_bar_dis, x='MES', y='CANT', color='DISCIPLINA', title="Sell In (Mix)", color_discrete_map=COLOR_MAP_DIS, text_auto='.2s'), use_container_width=True)
-
+    st.error("No se encontraron archivos CSV en la carpeta de Google Drive. Verifique la configuración de 'secrets'.")
     # --- 8. DETALLE SKU ---
     st.divider()
     t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
@@ -354,6 +348,7 @@ else:
                              title="Velocidad (Salto Ranking) vs Cobertura (MOS)",
                              color_discrete_map={'🔴 CRÍTICO: < 1 Mes': '#ff4b4b', '🟡 ADVERTENCIA: < 2 Meses': '#ffa500', '🟢 OK: Stock Suficiente': '#28a745', '🟢 OK: Sin Venta': '#28a745'})
         st.plotly_chart(fig_mos, use_container_width=True)
+
 
 
 
