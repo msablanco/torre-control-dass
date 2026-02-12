@@ -118,24 +118,20 @@ if data:
 
     so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
 
-# --- 6. STOCK EN CLIENTES (DINÁMICO) ---
+# --- 6. STOCK EN CLIENTES (Wholesale) ---
     st.divider()
     st.subheader("📦 Stock en Clientes (Wholesale)")
 
-    # 1. Validación de seguridad: Verificamos si los datos existen
-    data_disponible = 'df_stk_snap' in locals() and 'df_maestro_f' in locals()
+    # Paso A: Validamos que el stock y el maestro filtrado existan
+    if 'df_stk_snap' in locals() and df_stk_snap is not None:
+        
+        # Paso B: FILTRADO CRUCIAL
+        # Solo tomamos el stock de los SKUs que están en el maestro filtrado (Sidebar)
+        mask_stk = df_stk_snap['SKU'].isin(df_maestro_f['SKU'])
+        df_stk_f = df_stk_snap[mask_stk].copy()
 
-    if not data_disponible:
-        st.warning("Aguardando carga de archivos para procesar stock...")
-    else:
-        # 2. FILTRADO: Aquí es donde el stock se vuelve dinámico. 
-        # Filtramos los SKUs del stock usando solo los que están en el maestro filtrado por la sidebar.
-        df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
-
-        if df_stk_f.empty:
-            st.info("No hay stock disponible para los filtros seleccionados.")
-        else:
-            # 3. UNIÓN: Traemos Disciplina y Franja del maestro filtrado para los gráficos
+        if not df_stk_f.empty:
+            # Paso C: Unimos con df_maestro_f para heredar Disciplina y Franja filtradas
             df_stk_vis = pd.merge(
                 df_stk_f, 
                 df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], 
@@ -146,20 +142,24 @@ if data:
             col_st1, col_st2 = st.columns(2)
 
             with col_st1:
-                # Stock por Disciplina (Responde a Filtros)
+                # Gráfico dinámico por Disciplina
                 stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
                 fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
-                                     title="Stock por Disciplina",
+                                     title="Stock por Disciplina (Filtrado)",
                                      color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
                 st.plotly_chart(fig_stk_dis, use_container_width=True)
 
             with col_st2:
-                # Stock por Franja (Responde a Filtros)
+                # Gráfico dinámico por Franja
                 stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
                 fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
-                                     title="Stock por Franja",
+                                     title="Stock por Franja (Filtrado)",
                                      color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
                 st.plotly_chart(fig_stk_fra, use_container_width=True)
+        else:
+            st.info("No hay stock para los filtros seleccionados.")
+    else:
+        st.warning("No se encontraron datos de stock para mostrar.")
         
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -293,6 +293,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
