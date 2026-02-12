@@ -118,46 +118,34 @@ if data:
 
     so_f, si_f = apply_logic(so_raw), apply_logic(si_raw)
 
-    # --- 6. CABECERA Y KPIs ---
-    st.title("📊 Torre de Control Dass v11.38")
-    # --- 6. STOCK EN CLIENTES (DINÁMICO CON FILTROS) ---
-st.divider()
-st.subheader("📦 Stock en Clientes (Wholesale)")
+  # --- 6. STOCK EN CLIENTES (DINÁMICO CON FILTROS) ---
+    st.divider()
+    st.subheader("📦 Stock en Clientes (Wholesale)")
 
-# Aplicamos los mismos filtros que a los otros dataframes
-df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
+    # Filtramos el stock basándonos en el maestro ya filtrado por la sidebar
+    df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
 
-if not df_stk_f.empty:
-    # Unimos con el maestro filtrado para traer Disciplina y Franja
-    df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
-    
-    col_st1, col_st2 = st.columns(2)
+    if not df_stk_f.empty:
+        # Unimos para obtener las etiquetas de Disciplina y Franja
+        df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
+        
+        col_st1, col_st2 = st.columns(2)
 
-    with col_st1:
-        # Stock por Disciplina (Dinámico)
-        stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-        fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
-                             title="Stock por Disciplina",
-                             color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
-        st.plotly_chart(fig_stk_dis, use_container_width=True)
+        with col_st1:
+            stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+            fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
+                                 title="Stock por Disciplina",
+                                 color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+            st.plotly_chart(fig_stk_dis, use_container_width=True)
 
-    with col_st2:
-        # Stock por Franja (Dinámico)
-        stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-        fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
-                             title="Stock por Franja",
-                             color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
-        st.plotly_chart(fig_stk_fra, use_container_width=True)
-else:
-    st.info("No hay stock disponible para los filtros seleccionados.")
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Sell Out (Filtro)", f"{so_f['CANT'].sum():,.0f}")
-    k2.metric("Sell In (Filtro)", f"{si_f['CANT'].sum():,.0f}")
-    
-    val_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k3.metric("Stock Dass (Actual)", f"{val_d:,.0f}")
-    val_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum() if not stk_snap.empty else 0
-    k4.metric("Stock Cliente (Actual)", f"{val_c:,.0f}")
+        with col_st2:
+            stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+            fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
+                                 title="Stock por Franja",
+                                 color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
+            st.plotly_chart(fig_stk_fra, use_container_width=True)
+    else:
+        st.info("No hay stock disponible para los filtros seleccionados.")
 
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -291,5 +279,6 @@ else:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
