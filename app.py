@@ -176,26 +176,32 @@ if data:
     df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 
-  # --- 10. DETALLE POR SKU (CORREGIDO) ---
-st.divider()
-st.subheader("📋 Detalle por SKU")
+ # --- 10. DETALLE POR SKU (CORREGIDO E INDENTADO) ---
+    st.divider()
+    st.subheader("📋 Detalle por SKU: Stock, Venta e Ingresos Futuros")
 
-# Agrupamos los ingresos por SKU para sumarlos
-t_ingresos = ingresos_raw.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
+    # 1. Calculamos los ingresos futuros de forma independiente al filtro de mes
+    # Sumamos todo lo que hay en el archivo de ingresos para cada SKU
+    t_ingresos = ingresos_raw.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
 
-t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell Out')
-t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell In')
-t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Dass')
-t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock Cliente')
+    # 2. Agrupamos el resto de las métricas (estas sí responden a los filtros del sidebar)
+    t_so = so_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_Out')
+    t_si = si_f.groupby('SKU')['CANT'].sum().reset_index(name='Sell_In')
+    t_stk_d = stk_snap[stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
+    t_stk_c = stk_snap[~stk_snap['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Clientes')
 
-# Unimos t_ingresos a la cadena de merges
-df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
-    .merge(t_stk_c, on='SKU', how='left') \
-    .merge(t_stk_d, on='SKU', how='left') \
-    .merge(t_si, on='SKU', how='left') \
-    .merge(t_ingresos, on='SKU', how='left').fillna(0) # <-- Aquí se integra el dato
+    # 3. Construimos la tabla final uniendo todas las fuentes
+    df_detalle = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
+        .merge(t_stk_c, on='SKU', how='left') \
+        .merge(t_stk_d, on='SKU', how='left') \
+        .merge(t_si, on='SKU', how='left') \
+        .merge(t_ingresos, on='SKU', how='left').fillna(0)
 
-# Mostrar la tabla
+    # 4. Calculamos la rotación (Stock Clientes / Venta)
+    df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
+
+    # 5. Mostramos la tabla (Asegúrate de que esta línea esté al mismo nivel de indentación que las anteriores)
+    st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
 st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_width=True, hide_index=True)
     # --- 11. RANKINGS Y TENDENCIAS ---
     st.divider()
@@ -233,6 +239,7 @@ st.dataframe(df_final.sort_values('Sell Out', ascending=False), use_container_wi
         st.metric(f"Total Ingresos Futuros", f"{df_rank_dis['Futuros_Ingresos'].sum():,.0f}")
 
   
+
 
 
 
