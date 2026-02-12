@@ -190,8 +190,7 @@ if data:
     # Mapa de calor Visual
     st.plotly_chart(px.scatter(df_mos[df_mos['CANT'] > 0], x='Salto', y='Meses_Cobertura', size='CANT', color='Estado', hover_name='DESCRIPCION', color_discrete_map={'🔴 CRÍTICO': '#ff4b4b', '🟡 ADVERTENCIA': '#ffa500', '🟢 OK': '#28a745'}), use_container_width=True)
 
-else:
-    st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")2s'), use_container_width=True)
+
 
     # --- 9. EVOLUCIÓN HISTÓRICA ---
     st.divider()
@@ -267,6 +266,7 @@ else:
         st.plotly_chart(fig_mini, use_container_width=True)
 
   
+
 
 
 
