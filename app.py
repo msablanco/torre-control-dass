@@ -47,17 +47,24 @@ def load_drive_data():
                     df = df.rename(columns={p: 'SKU'})
                     break
             
-            # 4. LIMPIEZA DE DATOS EN SKU
-            if 'SKU' in df.columns:
-                df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+           # --- 4. LÓGICA DE EXTRAPOLACIÓN (Factor de Expansión) ---
+    if f_emp == "WHOLESALE":
+        # Verificamos si existen las columnas antes de operar
+        if not sell_out.empty and 'EMPRENDIMIENTO' in sell_out.columns and 'CLIENTE' in sell_out.columns:
+            clientes_reportan = sell_out[sell_out['EMPRENDIMIENTO'] == 'WHOLESALE']['CLIENTE'].unique()
             
-            name = f['name'].replace('.csv', '')
-            dfs[name] = df
+            # Filtramos Sell In para Wholesale
+            si_wholesale = sell_in[sell_in['EMPRENDIMIENTO'] == 'WHOLESALE']
+            si_total = si_wholesale['UNIDADES'].sum()
             
-        return dfs
-    except Exception as e:
-        st.error(f"Error en carga: {e}")
-        return {}
+            # Sell In de los clientes que sí nos dan Sell Out
+            si_reportan = si_wholesale[si_wholesale['CLIENTE'].isin(clientes_reportan)]['UNIDADES'].sum()
+            
+            factor_expansion = (si_total / si_reportan) if si_reportan > 0 else 1
+        else:
+            factor_expansion = 1
+    else:
+        factor_expansion = 1
 
     # --- 5. PESTAÑAS DE ANÁLISIS ---
     tab1, tab2, tab3 = st.tabs(["📊 Estrategia General", "⚡ Tactical (MOS & Rankings)", "👟 SKU Deep Dive"])
@@ -121,4 +128,5 @@ def load_drive_data():
 
 else:
     st.info("Esperando archivos CSV en la carpeta de Google Drive...")
+
 
