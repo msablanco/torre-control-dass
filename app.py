@@ -149,10 +149,10 @@ if data:
                     fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
                                          title="Stock por Franja",
                                          color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
-                    st.plotly_chart(fig_stk_fra, use_container_width=True)
-            else:
+                    st.plotly_chart(fig_stk_fra, use_container_width=True)    
+    else:
                 st.info("No hay stock disponible para los filtros seleccionados.")
-        else:
+    else:
             st.warning("No se ha cargado el archivo de Stock (df_stk_snap).")
             
     except NameError as e:
@@ -292,6 +292,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
