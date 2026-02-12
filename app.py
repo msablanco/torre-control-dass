@@ -122,43 +122,43 @@ if data:
     st.divider()
     st.subheader("📦 Stock en Clientes (Wholesale)")
 
-    # Usamos try/except para capturar cualquier error de variables no definidas
-    try:
-        # Verificamos que df_stk_snap exista y no sea None
-        if df_stk_snap is not None:
-            
-            # Filtramos el stock basándonos en el maestro que ya pasó por la sidebar
-            # Esto garantiza que el gráfico de stock responda a los filtros
-            df_stk_f = df_stk_snap[df_stk_snap['SKU'].isin(df_maestro_f['SKU'])]
-
-            if not df_stk_f.empty:
-                # Unimos para traer Disciplina y Franja
-                df_stk_vis = pd.merge(df_stk_f, df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], on='SKU', how='inner')
-                
-                col_st1, col_st2 = st.columns(2)
-
-                with col_st1:
-                    stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-                    fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
-                                         title="Stock por Disciplina",
-                                         color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
-                    st.plotly_chart(fig_stk_dis, use_container_width=True)
-
-                with col_st2:
-                    stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
-                    fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
-                                         title="Stock por Franja",
-                                         color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
-                    st.plotly_chart(fig_stk_fra, use_container_width=True)    
+    # Validación inicial: si no hay datos, mostramos aviso y salimos de la sección
+    if 'df_stk_snap' not in locals() or df_stk_snap is None:
+        st.warning("No se ha cargado el archivo de Stock.")
+    
     else:
-                st.info("No hay stock disponible para los filtros seleccionados.")
-    else:
-            st.warning("No se ha cargado el archivo de Stock (df_stk_snap).")
+        # Filtrado dinámico: Solo los SKUs que están en el maestro filtrado (Sidebar)
+        mask_stk = df_stk_snap['SKU'].isin(df_maestro_f['SKU'])
+        df_stk_f = df_stk_snap[mask_stk]
+
+        if df_stk_f.empty:
+            st.info("No hay stock disponible para los filtros seleccionados.")
+        else:
+            # Unimos con el maestro filtrado para traer Disciplina y Franja
+            df_stk_vis = pd.merge(
+                df_stk_f, 
+                df_maestro_f[['SKU', 'DISCIPLINA', 'FRANJA']], 
+                on='SKU', 
+                how='inner'
+            )
             
-    except NameError as e:
-        st.error(f"Error de variables: {e}. Asegúrate de que los filtros se apliquen antes de esta sección.")
-    except Exception as e:
-        st.error(f"Ocurrió un error inesperado: {e}")
+            col_st1, col_st2 = st.columns(2)
+
+            with col_st1:
+                # Stock por Disciplina
+                stk_dis = df_stk_vis.groupby('DISCIPLINA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                fig_stk_dis = px.bar(stk_dis, x='DISCIPLINA', y='CANT', 
+                                     title="Stock por Disciplina",
+                                     color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS)
+                st.plotly_chart(fig_stk_dis, use_container_width=True)
+
+            with col_st2:
+                # Stock por Franja
+                stk_fra = df_stk_vis.groupby('FRANJA')['CANT'].sum().reset_index().sort_values('CANT', ascending=False)
+                fig_stk_fra = px.bar(stk_fra, x='FRANJA', y='CANT', 
+                                     title="Stock por Franja",
+                                     color='FRANJA', color_discrete_map=COLOR_MAP_FRA)
+                st.plotly_chart(fig_stk_fra, use_container_width=True)
         
     # --- 7. ANÁLISIS POR DISCIPLINA ---
     st.divider()
@@ -292,6 +292,7 @@ if data:
 
 else:
     st.error("No se detectaron archivos o hay un error en la conexión con Google Drive.")
+
 
 
 
