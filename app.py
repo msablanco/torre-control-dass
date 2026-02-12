@@ -51,9 +51,9 @@ def load_data():
 
 data = load_data()
 
-# --- TODO EL CONTENIDO DEBE ESTAR DENTRO DE ESTE IF ---
+# --- 3. FLUJO PRINCIPAL DE LA APP ---
 if data:
-    # 3. Procesamiento Maestro
+    # Procesamiento Maestro de Productos
     df_ma = data.get('Maestro_Productos', pd.DataFrame()).copy()
     if not df_ma.empty:
         df_ma['SKU'] = df_ma['SKU'].astype(str).str.strip().str.upper()
@@ -77,22 +77,23 @@ if data:
 
     so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
 
-    # 4. Filtros Sidebar
-    st.sidebar.header("🔍 Filtros Globales")
-    search_query = st.sidebar.text_input("🎯 SKU / Descripción").upper()
-    meses_op = sorted(list(set(so_raw['MES'].unique()) | set(stk_raw['MES'].unique())), reverse=True)
-    f_periodo = st.sidebar.selectbox("📅 Seleccionar Mes", meses_op if meses_op else ["S/D"])
+    # --- 4. SIDEBAR (FILTROS QUE ACTUALIZAN TODO) ---
+    st.sidebar.header("🔍 Filtros de Negocio")
+    search_query = st.sidebar.text_input("🎯 Buscar SKU o Descripción").upper()
+    
+    meses_op = sorted(list(set(so_raw['MES'].dropna()) | set(stk_raw['MES'].dropna())), reverse=True)
+    f_periodo = st.sidebar.selectbox("📅 Mes Principal", meses_op if meses_op else ["S/D"])
     
     f_dis = st.sidebar.multiselect("👟 Disciplinas", sorted(df_ma['DISCIPLINA'].unique()))
     f_fra = st.sidebar.multiselect("💰 Franjas", sorted(df_ma['FRANJA_PRECIO'].unique()))
     f_cli_so = st.sidebar.multiselect("👤 Cliente Sell Out", sorted(so_raw['CLIENTE_UP'].unique()))
     f_cli_si = st.sidebar.multiselect("📦 Cliente Sell In", sorted(si_raw['CLIENTE_UP'].unique()))
 
-    # 5. Lógica de Filtrado
+    # --- 5. MOTOR DE FILTRADO ---
     def apply_filters(df, tipo=None):
         if df.empty: return df
         temp = df.merge(df_ma[['SKU', 'DISCIPLINA', 'FRANJA_PRECIO', 'DESCRIPCION', 'BUSQUEDA']], on='SKU', how='left')
-        temp = temp[temp['MES'] == f_periodo]
+        temp = temp[temp['MES'] == f_periodo] # Este filtro actualiza los gráficos marcados
         if f_dis: temp = temp[temp['DISCIPLINA'].isin(f_dis)]
         if f_fra: temp = temp[temp['FRANJA_PRECIO'].isin(f_fra)]
         if search_query: temp = temp[temp['BUSQUEDA'].str.contains(search_query, na=False)]
@@ -104,38 +105,50 @@ if data:
     si_f = apply_filters(si_raw, 'SI')
     stk_f = apply_filters(stk_raw)
 
-    # 6. Visualización de Gráficos (Sincronizados con el mes)
-    st.title(f"🚀 Dashboard Fila - {f_periodo}")
+    # --- 6. KPIs Y GRÁFICOS (ACTUALIZADOS POR MES) ---
+    st.title(f"📊 Dashboard Performance - {f_periodo}")
     
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        # Gráfico Stock Dass
+    # KPIs Rápidos
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Sell Out", f"{int(so_f['CANT'].sum()):,}")
+    k2.metric("Sell In", f"{int(si_f['CANT'].sum()):,}")
+    stk_d_val = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
+    k3.metric("Stock Dass", f"{int(stk_d_val):,}")
+    stk_c_val = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)]['CANT'].sum()
+    k4.metric("Stock Cliente", f"{int(stk_c_val):,}")
+
+    st.divider()
+    
+    # Los 3 Gráficos de Torta que marcaste en la imagen
+    c1, c2, c3 = st.columns(3)
+    with c1:
         df_p_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
         st.plotly_chart(px.pie(df_p_d, values='CANT', names='DISCIPLINA', title="Stock Dass", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with col_b:
-        # Gráfico Sell Out
+    with c2:
         df_p_so = so_f.groupby('DISCIPLINA')['CANT'].sum().reset_index()
         st.plotly_chart(px.pie(df_p_so, values='CANT', names='DISCIPLINA', title="Sell Out", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
-    with col_c:
-        # Gráfico Stock Cliente (EL QUE MARCASTE EN LA IMAGEN)
+    with c3:
+        # Gráfico Stock Cliente (Actualizado con f_periodo)
         df_p_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('DISCIPLINA')['CANT'].sum().reset_index()
         st.plotly_chart(px.pie(df_p_c, values='CANT', names='DISCIPLINA', title="Stock Cliente", color='DISCIPLINA', color_discrete_map=COLOR_MAP_DIS), use_container_width=True)
 
-    # 7. Alerta de Quiebre (Reparando NameError de t_stk_d y t_stk_c)
+    # --- 7. ALERTA DE QUIEBRE (NAMEERROR REPARADO) ---
     st.divider()
-    st.subheader("🚨 Alerta de Quiebre: Velocidad vs Cobertura")
+    st.subheader("🚨 Alerta de Quiebre (MOS)")
     
-    # Definición de las variables que faltaban
+    # Preparamos las tablas de stock para el merge
     t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
     t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Cliente')
     
-    df_rank = so_f.groupby(['SKU', 'DESCRIPCION'])['CANT'].sum().reset_index(name='Venta_Mes')
-    df_alerta = df_rank.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
+    df_v = so_f.groupby(['SKU', 'DESCRIPCION'])['CANT'].sum().reset_index(name='Venta_Mes')
+    df_alerta = df_v.merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').fillna(0)
     
+    # Mostrar tabla de alertas
     st.dataframe(df_alerta.sort_values('Venta_Mes', ascending=False), use_container_width=True, hide_index=True)
 
 else:
-    st.error("No se detectaron datos en Google Drive.")
+    # Este else está alineado perfectamente con el 'if data:' inicial
+    st.error("No se detectaron archivos en Google Drive.")
 
     # --- 8. RANKINGS Y ERROR FIX (NameError) ---
     st.divider()
@@ -194,5 +207,6 @@ else:
 
 else:
     st.error("Sin conexión a Drive.")
+
 
 
