@@ -74,8 +74,7 @@ if data:
         df['CLIENTE_UP'] = df.get('CLIENTE', 'S/D').fillna('S/D').astype(str).str.upper()
         return df
 
-    so_raw, si_raw, stk_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock')
-
+    so_raw, si_raw, stk_raw, ingresos_raw = clean_df('Sell_out'), clean_df('Sell_in'), clean_df('Stock'), clean_df('Ingresos')
     # --- 4. FILTROS SIDEBAR (ACTUALIZADO) ---
     st.sidebar.header("🔍 Filtros Globales")
     search_query = st.sidebar.text_input("🎯 Buscar SKU o Modelo").upper()
@@ -146,13 +145,28 @@ if data:
     t_stk_d = stk_f[stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Dass')
     t_stk_c = stk_f[~stk_f['CLIENTE_UP'].str.contains('DASS', na=False)].groupby('SKU')['CANT'].sum().reset_index(name='Stock_Clientes')
     # Futuros Ingresos (Todo lo que sea Sell In posterior al mes actual)
-    t_futuro = si_raw[si_raw['FECHA_DT'] > pd.to_datetime('today')].groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
+   # --- Nueva lógica para sumar ingresos desde el mes actual real ---
+import datetime
+hoy = datetime.date.today()
+primer_dia_mes_actual = pd.Timestamp(hoy.year, hoy.month, 1)
 
-    df_detalle = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left').merge(t_si, on='SKU', how='left').merge(t_stk_d, on='SKU', how='left').merge(t_stk_c, on='SKU', how='left').merge(t_futuro, on='SKU', how='left').fillna(0)
-    
-    df_detalle['Rotacion_Meses'] = (df_detalle['Stock_Clientes'] / df_detalle['Sell_Out']).replace([float('inf')], 0).fillna(0)
+if not ingresos_raw.empty:
+    # [cite_start]Filtramos el archivo ingresos.csv para que sume desde hoy hacia adelante [cite: 1]
+    df_ing_futuros = ingresos_raw[ingresos_raw['FECHA_DT'] >= primer_dia_mes_actual].copy()
+    t_futuro = df_ing_futuros.groupby('SKU')['CANT'].sum().reset_index(name='Futuros_Ingresos')
+else:
+    t_futuro = pd.DataFrame(columns=['SKU', 'Futuros_Ingresos'])
     
     st.dataframe(df_detalle.sort_values('Sell_Out', ascending=False), use_container_width=True, hide_index=True)
+    # [cite_start]Unimos todas las métricas en una sola tabla [cite: 1]
+df_final = df_ma[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(t_so, on='SKU', how='left') \
+    .merge(t_stk_c, on='SKU', how='left') \
+    .merge(t_stk_d, on='SKU', how='left') \
+    .merge(t_si, on='SKU', how='left') \
+    [cite_start].merge(t_futuro, on='SKU', how='left').fillna(0) # Aquí se integra la columna que faltaba [cite: 1]
+
+# Cálculo de rotación (Stock Clientes / Sell Out)
+df_final['Rotacion_Meses'] = (df_final['Stock Cliente'] / df_final['Sell Out']).replace([float('inf')], 0).fillna(0)
 
     # --- 9. ALERTA DE QUIEBRE CON SEMÁFORO ---
     st.divider()
@@ -243,6 +257,7 @@ if data:
         st.plotly_chart(fig_mini, use_container_width=True)
 
   
+
 
 
 
