@@ -140,41 +140,40 @@ if data:
                 st.dataframe(tabla_disc.sort_values('TOTAL', ascending=False).style.format("{:,.0f}"), use_container_width=True)
 # --- CONTINUACIÓN DEL CÓDIGO (Tab 2 y Tab 3) ---
 
-    with tab2:
+  with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # Cálculo de Venta Mensual Proyectada por SKU
-        vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
-        factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
+        # 1. Unificar a una fila por SKU (Agrupación)
+        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index() [cite: 16]
+        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'}) [cite: 16]
         
-        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
+        # 2. Agregar Ingresos Futuros (Columna solicitada)
+        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'}) [cite: 21]
         
-        # Consolidado Tactical
-        tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
-        tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
-        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf')], 99).round(1)
+        # 3. Consolidado Tactical Único
+        tactical = m_filt.drop_duplicates('SKU').merge(stk_sku, on='SKU', how='left') \
+                         .merge(vta_sku_25, on='SKU', how='left') \
+                         .merge(ing_futuros, on='SKU', how='left').fillna(0) [cite: 17]
         
-        # Clasificación de Salud
-        def clasificar_salud(row):
-            if row['VTA_PROY_MENSUAL'] == 0 and row['STK_ACTUAL'] > 0: return "🔴 EXCESO/CLAVO"
-            if row['MOS'] < 2.5: return "🔥 QUIEBRE"
-            if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
-            return "✅ SALUDABLE"
+        # 4. Cálculo de Proyección y MOS (Evitando -inf)
+        vta_tot_25 = vta_sku_25['CANTIDAD'].sum()
+        factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1 [cite: 16]
         
-        tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
+        tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0) [cite: 17]
         
-        # KPIs de la solapa
+        # Corrección de -inf: Si la venta es 0, el MOS es 99 (exceso) en lugar de infinito
+        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), -float('inf')], 99).fillna(0).round(1) [cite: 17]
+        
+        # KPIs Corregidos
         c1, c2, c3 = st.columns(3)
-        c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
-        c2.metric("SKUs con Exceso", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
-        c3.metric("Stock Promedio (MOS)", f"{tactical['MOS'].mean():.1f} meses")
+        c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['MOS'] < 2.5])) [cite: 18, 19]
+        c2.metric("SKUs con Exceso", len(tactical[tactical['MOS'] > 8])) [cite: 18, 19]
+        # Stock Promedio filtrando valores nulos para evitar el "-inf" en el KPI
+        mos_real = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
+        c3.metric("Stock Promedio (MOS)", f"{mos_real:.1f} meses" if pd.notnull(mos_real) else "0.0 meses") [cite: 19]
 
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
-                     .sort_values('VTA_PROY_MENSUAL', ascending=False)
-                     .style.applymap(lambda x: 'color: red' if 'QUIEBRE' in str(x) else ('color: orange' if 'SOBRE' in str(x) else 'color: green'), subset=['ESTADO']), 
-                     use_container_width=True)
-
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
+                     .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad por SKU")
         sku_sel = st.selectbox("Seleccionar Producto Crítico", tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique())
@@ -213,3 +212,4 @@ if data:
             
             st.info(f"💡 **Análisis:** Para el SKU {sku_sel}, se proyecta una venta de {vta_mensual:,.0f} unidades mensuales. "
                     f"El stock {'se agota' if min(evolucion_stk) == 0 else 'está cubierto'} durante el año.")
+
