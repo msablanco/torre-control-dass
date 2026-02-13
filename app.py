@@ -109,7 +109,9 @@ if data:
         st.subheader("📋 Detalle Mensual Histórico vs Proyectado")
         df_m = pd.DataFrame({"Mes": meses_labels, "Sell In 2025": v_in_25.values, "Sell Out 2025": v_out_25.values, "Proy 2026": v_proy_26.values}).set_index("Mes")
         df_m.loc['TOTAL'] = df_m.sum()
-        st.dataframe(df_m.T.style.format(lambda x: fmt_p(x)), use_container_width=True)with tab2:
+        st.dataframe(df_m.T.style.format(lambda x: fmt_p(x)), use_container_width=True)
+        
+    with tab2:
         st.subheader("📝 Matriz de Planeamiento S&OP")
         
         # 1. Consolidación de Stock (DASS)
@@ -175,3 +177,4 @@ else:
     # Mensaje de espera si los datos no cargan
     st.warning("⚠️ No se detectaron archivos válidos en la carpeta de Google Drive configurada.")
     st.info("Asegúrate de que los archivos .csv tengan los nombres: 'Sell_Out', 'Sell_In_Ventas', 'Stock' y 'Maestro_Productos'.")
+
