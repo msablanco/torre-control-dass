@@ -67,33 +67,31 @@ if data:
     st.sidebar.markdown("---")
     opciones_emp = sorted(list(set(sell_in['EMPRENDIMIENTO'].dropna().unique()) | set(sell_out['EMPRENDIMIENTO'].dropna().unique())))
     f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
-    
     f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
     f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if 'FRANJA_PRECIO' in maestro.columns else [])
 
-    # --- LÓGICA DE FILTRADO DINÁMICO ---
+    # --- LÓGICA DE FILTRADO GLOBAL ---
     m_filt = maestro.copy()
     if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
     if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
-    def apply_filters(df):
+    def aplicar_filtros_tabla(df):
         if df.empty: return df
-        temp = df[df['SKU'].isin(m_filt['SKU'])]
-        if f_emp and 'EMPRENDIMIENTO' in temp.columns: temp = temp[temp['EMPRENDIMIENTO'].isin(f_emp)]
-        if f_cli and 'CLIENTE_NAME' in temp.columns: temp = temp[temp['CLIENTE_NAME'].isin(f_cli)]
-        return temp
+        df_f = df[df['SKU'].isin(m_filt['SKU'])]
+        if f_emp and 'EMPRENDIMIENTO' in df_f.columns: df_f = df_f[df_f['EMPRENDIMIENTO'].isin(f_emp)]
+        if f_cli and 'CLIENTE_NAME' in df_f.columns: df_f = df_f[df_f['CLIENTE_NAME'].isin(f_cli)]
+        return df_f
 
-    si_filt = apply_filters(sell_in)
-    so_filt = apply_filters(sell_out)
-    stk_filt = apply_filters(stock)
-    ing_filt = apply_filters(ingresos)
+    si_filt = aplicar_filtros_tabla(sell_in)
+    so_filt = aplicar_filtros_tabla(sell_out)
+    stk_filt = aplicar_filtros_tabla(stock)
+    ing_filt = aplicar_filtros_tabla(ingresos)
 
-    # --- TABS ---
+    # --- TABS (CORREGIDO NAMEERROR) ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
-
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
 
-    # SOLAPA 1: PERFORMANCE (MANTENIDA)
+    # SOLAPA 1: PERFORMANCE (SIN CAMBIOS)
     with tab1:
         st.subheader("Análisis de Demanda y Proyección Unificada")
         si_25 = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
@@ -103,7 +101,6 @@ if data:
             so_25['PROY_2026'] = ((so_25['CANTIDAD'] / total_so_25) * target_vol).round(0)
         else:
             so_25['PROY_2026'] = 0
-
         df_plot = pd.DataFrame({'MES_STR': [str(i).zfill(2) for i in range(1, 13)]}).merge(si_25, on='MES_STR', how='left').merge(so_25, on='MES_STR', how='left').fillna(0)
         df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
         fig = go.Figure()
@@ -112,30 +109,31 @@ if data:
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
         st.plotly_chart(fig, use_container_width=True)
 
-    # SOLAPA 2: TACTICAL (CORREGIDA)
+    # SOLAPA 2: TACTICAL (MEJORADA Y SIN DUPLICADOS)
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # Agrupaciones por SKU filtradas por Emprendimiento
         vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
         factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
         
+        # Agregaciones Únicas por SKU
         vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT_2025'})
         stk_sku = stk_filt.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
         ing_sku = ing_filt.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
         si_sku = si_filt[si_filt['AÑO'] == 2025].groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'SELL_IN_2025'})
         
-        # Unión y limpieza de duplicados
+        # Merge Unificado (drop_duplicates en maestro para evitar filas fantasma)
         tactical = m_filt.drop_duplicates(subset=['SKU']).merge(stk_sku, on='SKU', how='left') \
                          .merge(vta_sku_25, on='SKU', how='left') \
                          .merge(ing_sku, on='SKU', how='left') \
                          .merge(si_sku, on='SKU', how='left').fillna(0)
         
-        # Filtro: Solo mostrar si tiene algún dato
+        # Filtro: Eliminar si todas las columnas clave son cero
         tactical = tactical[(tactical['STK_ACTUAL'] > 0) | (tactical['SELL_OUT_2025'] > 0) | 
                             (tactical['SELL_IN_2025'] > 0) | (tactical['INGRESOS_FUTUROS'] > 0)]
         
         tactical['VTA_PROY_MENSUAL'] = ((tactical['SELL_OUT_2025'] * factor_escala) / 12).round(0)
+        # Fix MOS: Reemplazar infinitos por 99 meses (exceso)
         tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), -float('inf')], 99).round(1)
         
         def clasificar(row):
@@ -147,6 +145,7 @@ if data:
         tactical['ESTADO'] = tactical.apply(clasificar, axis=1)
         
         c1, c2 = st.columns(2)
+        # Contar SKUs únicos reales
         c1.metric("SKUs en Riesgo de Quiebre (Únicos)", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
         c2.metric("SKUs con Exceso (Únicos)", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
 
@@ -155,7 +154,7 @@ if data:
                      .style.format({'STK_ACTUAL': '{:,.0f}', 'SELL_OUT_2025': '{:,.0f}', 'INGRESOS_FUTUROS': '{:,.0f}', 'VTA_PROY_MENSUAL': '{:,.0f}'}), 
                      use_container_width=True)
 
-    # SOLAPA 3: ESCENARIOS (MANTENIDA Y CONECTADA)
+    # SOLAPA 3: ESCENARIOS (CONECTADA)
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
         sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
@@ -169,5 +168,5 @@ if data:
                 curr = (curr + ing_detalle.get(str(i).zfill(2), 0)) - m_sku['VTA_PROY_MENSUAL']
                 evol.append(max(0, curr))
             fig_op = go.Figure()
-            fig_op.add_trace(go.Scatter(x=list(meses_nombres.values()), y=evol, name="Stock", fill='tozeroy', line=dict(color='red')))
+            fig_op.add_trace(go.Scatter(x=list(meses_nombres.values()), y=evol, name="Stock Proyectado", fill='tozeroy', line=dict(color='red')))
             st.plotly_chart(fig_op, use_container_width=True)
