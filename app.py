@@ -9,7 +9,7 @@ import io
 
 st.set_page_config(page_title="FILA - Torre de Control Forecast", layout="wide")
 
-# --- CARGA DE DATOS ---
+# --- 1. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_drive_data():
     try:
@@ -59,7 +59,7 @@ if data:
                 df['MES_STR'] = df['FECHA_DT'].dt.strftime('%m')
                 df['AÑO'] = df['FECHA_DT'].dt.year
 
-    # --- SIDEBAR ---
+    # --- 2. SIDEBAR ---
     st.sidebar.title("🎮 PARÁMETROS")
     search_query = st.sidebar.text_input("🔍 Buscar SKU o Descripción", "").upper()
     target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 500000, 1500000, 1000000, step=50000)
@@ -71,20 +71,20 @@ if data:
     f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
     f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if 'FRANJA_PRECIO' in maestro.columns else [])
 
-    # --- FILTRADO ---
+    # --- 3. LÓGICA DE FILTRADO ---
     m_filt = maestro.copy()
     if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
     if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
     si_filt = sell_in[sell_in['SKU'].isin(m_filt['SKU'])]
     if f_emp: si_filt = si_filt[si_filt['EMPRENDIMIENTO'].isin(f_emp)]
-    if f_cli: si_filt = f_cli[si_filt['CLIENTE_NAME'].isin(f_cli)]
+    if f_cli: si_filt = si_filt[si_filt['CLIENTE_NAME'].isin(f_cli)]
 
     so_filt = sell_out[sell_out['SKU'].isin(m_filt['SKU'])]
     if f_emp: so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
     if f_cli: so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
 
-    # --- MOTOR DE CÁLCULO UNIFICADO ---
+    # --- 4. MOTOR DE CÁLCULO UNIFICADO (SÓLO UNA VEZ) ---
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
     
     vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
@@ -115,7 +115,7 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-    # --- RENDERIZADO DE TABS ---
+    # --- 5. RENDERIZADO DE TABS (UNA SOLA DEFINICIÓN) ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
 
     with tab1:
@@ -136,7 +136,9 @@ if data:
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
-        st.plotly_chart(fig_perf, use_container_width=True, key="chart_performance_main")
+        
+        # KEY ÚNICA PARA TAB 1
+        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_tab1_principal")
 
         st.markdown("### 📋 Detalle Mensual")
         df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
@@ -154,12 +156,14 @@ if data:
         c3.metric("MOS Promedio", f"{mos_prom:.1f} meses")
 
         cols_f = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
+        # Usamos SKU como índice para eliminar la columna de números de fila
         st.dataframe(tactical[cols_f].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
 
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
         sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
-        sku_sel = st.selectbox("Seleccionar SKU para análisis", sku_list, key="selector_sku_tab3")
+        # KEY ÚNICA PARA SELECTOR
+        sku_sel = st.selectbox("Seleccionar SKU para análisis", sku_list, key="selector_sku_escenarios")
         
         if sku_sel:
             dat = tactical[tactical['SKU'] == sku_sel].iloc[0]
@@ -177,15 +181,17 @@ if data:
             
             fig_stk = go.Figure()
             fig_stk.add_trace(go.Scatter(x=mes_eje, y=stk_ev, name="Stock", line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
-            fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos 2026", marker_color='#2ecc71', opacity=0.7))
+            fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos", marker_color='#2ecc71', opacity=0.7))
             fig_stk.add_hline(y=dat['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Seguridad")
             
             fig_stk.update_layout(title=f"Flujo Proyectado: {sku_sel}", hovermode="x unified")
-            st.plotly_chart(fig_stk, use_container_width=True, key="chart_sku_tab3")
+            
+            # KEY ÚNICA PARA TAB 3
+            st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab3_sku")
             
             if min(stk_ev) == 0:
                 st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total.")
             else:
                 st.success(f"✅ Abastecimiento cubierto para {sku_sel}.")
 else:
-    st.warning("No se pudieron cargar los datos. Verifica la conexión con Google Drive.")
+    st.warning("Cargando archivos desde Google Drive...")
