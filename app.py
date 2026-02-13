@@ -139,5 +139,85 @@ if data:
                 tabla_disc['TOTAL'] = tabla_disc.sum(axis=1)
                 st.dataframe(tabla_disc.sort_values('TOTAL', ascending=False).style.format("{:,.0f}"), use_container_width=True)
 
-else:
-    st.info("Cargando datos desde Google Drive...")
+# =========================================================
+    # SOLAPA 2: TACTICAL (MOS & MIX 360)
+    # =========================================================
+    with tab2:
+        st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
+        
+        if not stock.empty:
+            # 1. Preparar el Stock Actual por SKU
+            col_stk = next((c for c in ['CANTIDAD', 'PARES', 'STOCK'] if c in stock.columns), None)
+            stk_res = stock.groupby('SKU')[col_stk].sum().reset_index().rename(columns={col_stk: 'STOCK_ACTUAL'})
+            
+            # 2. Obtener la Proyección Mensual Promedio (de lo que calculamos en Tab 1)
+            # Calculamos la venta mensual promedio proyectada para 2026
+            vta_prom_proy = df_plot['PROY_2026'].mean()
+            
+            # 3. Cruzar Maestro con Stock
+            tactical_df = m_filt[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(stk_res, on='SKU', how='left').fillna(0)
+            
+            # 4. Calcular MOS (Months on Hand) 
+            # Si no hay venta proyectada para ese SKU, usamos el promedio del grupo
+            tactical_df['VTA_PROY_MES'] = (target_vol / 12) * (1 / len(m_filt) if len(m_filt)>0 else 0) # Estimado simple por SKU
+            tactical_df['MOS'] = (tactical_df['STOCK_ACTUAL'] / tactical_df['VTA_PROY_MES']).round(1)
+            
+            # 5. Semáforo de Salud
+            def color_mos(val):
+                if val < 1: return 'background-color: #ffcccc' # Quiebre inminente
+                if 1 <= val <= 3: return 'background-color: #ccffcc' # Saludable
+                return 'background-color: #ffffcc' # Exceso
+            
+            st.dataframe(
+                tactical_df.style.applymap(color_mos, subset=['MOS']).format({'STOCK_ACTUAL': '{:,.0f}', 'VTA_PROY_MES': '{:,.0f}'}),
+                use_container_width=True
+            )
+        else:
+            st.warning("⚠️ No se encontró el archivo de Stock para calcular el MOS.")
+
+    # =========================================================
+    # SOLAPA 3: ESCENARIOS (LÍNEA DE TIEMPO DE OPORTUNIDAD)
+    # =========================================================
+    with tab3:
+        st.subheader("🔮 Línea de Tiempo Dinámica de Oportunidad")
+        
+        if not m_filt.empty:
+            col_sku = st.selectbox("Seleccionar SKU para análisis 360", m_filt['SKU'].unique())
+            
+            # Simulación de agotamiento de stock
+            stk_inicial = tactical_df[tactical_df['SKU'] == col_sku]['STOCK_ACTUAL'].values[0] if col_sku in tactical_df['SKU'].values else 0
+            
+            # Curva de demanda (usamos la estacionalidad de la Tab 1)
+            curva_demanda = df_plot['PROY_2026'].values
+            meses = df_plot['MES_NOM'].values
+            
+            stk_evolutivo = []
+            current_stk = stk_inicial
+            for vta in curva_demanda:
+                current_stk = max(0, current_stk - vta)
+                stk_evolutivo.append(current_stk)
+            
+            # Gráfico de Oportunidad
+            fig_opp = go.Figure()
+            # Área de Stock
+            fig_opp.add_trace(go.Scatter(x=meses, y=stk_evolutivo, fill='tozeroy', name='Stock Proyectado', line=dict(color='#2ecc71')))
+            # Línea de Demanda
+            fig_opp.add_trace(go.Scatter(x=meses, y=curva_demanda, name='Demanda Mensual', line=dict(color='#e74c3c', dash='dot')))
+            
+            fig_opp.update_layout(
+                title=f"¿Cuándo se agota el {col_sku}?",
+                xaxis_title="Meses 2026",
+                yaxis_title="Pares",
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_opp, use_container_width=True)
+            
+            # Cálculo de Fecha de Quiebre
+            mes_quiebre = "Sin quiebre"
+            for i, s in enumerate(stk_evolutivo):
+                if s <= 0:
+                    mes_quiebre = meses[i]
+                    break
+            
+            st.metric("Fecha estimada de quiebre", mes_quiebre)
+            st.write(f"Para cubrir la demanda de 2026, necesitas comprar: **{max(0, curva_demanda.sum() - stk_inicial):,.0f} pares adicionales.**")
