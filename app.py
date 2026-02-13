@@ -6,190 +6,143 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# --- 1. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="FILA - Torre de Control S&OP", layout="wide")
+# --- 1. CONFIGURACIÓN ---
+st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 def fmt(v):
-    if pd.isna(v) or v == 0: return "0"
-    return f"{v:,.0f}".replace(",", ".")
+    return f"{v:,.0f}".replace(",", ".") if v and not pd.isna(v) else "0"
 
-# --- 2. CARGA DE DATOS DESDE GOOGLE DRIVE ---
+# --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
-def load_data_from_drive():
+def load_data():
     try:
         info = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(info)
         service = build('drive', 'v3', credentials=creds)
-        folder_id = st.secrets["google_drive_folder_id"]
-        
-        results = service.files().list(
-            q=f"'{folder_id}' in parents and mimeType='text/csv'",
-            fields="files(id, name)"
-        ).execute()
-        
-        files = results.get('files', [])
+        f_id = st.secrets["google_drive_folder_id"]
+        res = service.files().list(q=f"'{f_id}' in parents and mimeType='text/csv'", fields="files(id, name)").execute()
         dfs = {}
-        
-        for f in files:
+        for f in res.get('files', []):
             name = f['name'].replace('.csv', '').strip()
-            request = service.files().get_media(fileId=f['id'])
+            req = service.files().get_media(fileId=f['id'])
             fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
+            downloader = MediaIoBaseDownload(fh, req)
             done = False
-            while not done:
-                _, done = downloader.next_chunk()
-            
+            while not done: _, done = downloader.next_chunk()
             fh.seek(0)
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
-            
-            # Normalización de Columnas
             df.columns = [str(c).strip().upper() for c in df.columns]
             df = df.loc[:, ~df.columns.duplicated()]
-            df = df.rename(columns={
-                'ARTICULO': 'SKU', 'CODIGO': 'SKU', 
-                'CANT': 'CANTIDAD', 'QTY': 'CANTIDAD', 'UNIDADES': 'CANTIDAD'
-            })
             
-            if 'SKU' in df.columns:
-                df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+            # Normalización
+            df = df.rename(columns={'ARTICULO':'SKU','CODIGO':'SKU','CANT':'CANTIDAD','QTY':'CANTIDAD','UNIDADES':'CANTIDAD'})
+            if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
-            # Lógica específica para Sell In Wholesale
             if "SELL_IN_VENTAS" in name.upper():
-                if 'EMPRENDIMIENTO' not in df.columns:
-                    df['EMPRENDIMIENTO'] = 'WHOLESALE'
-                if len(df.columns) >= 2:
-                    df = df.rename(columns={df.columns[1]: 'F_REF'})
-                if len(df.columns) >= 7:
-                    df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
+                if len(df.columns) >= 2: df = df.rename(columns={df.columns[1]: 'F_REF'})
+                if len(df.columns) >= 7: df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
             
             if 'CANTIDAD' in df.columns:
                 df['CANTIDAD'] = pd.to_numeric(df['CANTIDAD'], errors='coerce').fillna(0)
-                
             dfs[name] = df
         return dfs
     except Exception as e:
         st.error(f"Error en conexión: {e}")
         return {}
 
-data = load_data_from_drive()
+data = load_data()
 
 if data:
-    # 3. ASIGNACIÓN DE DATAFRAMES
     so_raw = data.get('Sell_Out', pd.DataFrame())
-    si_raw = data.get('Sell_In_Ventas', data.get('Sell_In', pd.DataFrame()))
+    si_raw = data.get('Sell_In_Ventas', pd.DataFrame())
     mae = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stk_raw = data.get('Stock', pd.DataFrame())
 
-    # 4. SIDEBAR - CONTROL DE PARÁMETROS
-    st.sidebar.header("🎯 OBJETIVOS 2026")
-    vol_obj = st.sidebar.number_input("Volumen Objetivo Anual", value=1000000, step=50000)
-    mos_target = st.sidebar.slider("MOS Objetivo (Meses de Stock)", 1, 8, 3)
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔍 FILTROS DINÁMICOS")
+    # --- 3. SIDEBAR ---
+    st.sidebar.header("🎯 PARÁMETROS SOP")
+    obj_26 = st.sidebar.number_input("Objetivo 2026", value=700000)
+    mos_obj = st.sidebar.slider("MOS Objetivo", 1, 8, 3)
     
     canales = sorted(so_raw['EMPRENDIMIENTO'].unique()) if 'EMPRENDIMIENTO' in so_raw.columns else []
-    f_canal = st.sidebar.multiselect("Filtrar por Canal", canales)
-    
-    query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
+    f_emp = st.sidebar.multiselect("Canal", canales)
+    q = st.sidebar.text_input("🔍 Buscar SKU/Desc").upper()
 
-    # 5. PROCESAMIENTO SELL OUT (BASE 2025)
-    col_fecha = next((c for c in so_raw.columns if any(x in c for x in ['FECHA', 'DATE', 'MES'])), None)
-    so_raw['FECHA_DT'] = pd.to_datetime(so_raw[col_fecha], dayfirst=True, errors='coerce')
+    # --- 4. PROCESAMIENTO FECHAS (BLINDADO) ---
+    def get_date_col(df):
+        for c in df.columns:
+            if any(x in c for x in ['FECHA', 'DATE', 'F_REF', 'MES']): return c
+        return None
+
+    # Procesar Sell Out
+    c_f_out = get_date_col(so_raw)
+    if c_f_out:
+        so_raw['FECHA_DT'] = pd.to_datetime(so_raw[c_f_out], dayfirst=True, errors='coerce')
+        so_25 = so_raw[so_raw['FECHA_DT'].dt.year == 2025].copy()
+    else:
+        so_25 = pd.DataFrame()
+
+    # Procesar Sell In
+    c_f_in = get_date_col(si_raw)
+    if c_f_in:
+        si_raw['FECHA_DT'] = pd.to_datetime(si_raw[c_f_in], dayfirst=True, errors='coerce')
+        si_25 = si_raw[si_raw['FECHA_DT'].dt.year == 2025].copy()
+    else:
+        si_25 = pd.DataFrame()
+
+    # --- 5. FILTROS Y FACTOR ---
+    so_25 = so_25.merge(mae[['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO']], on='SKU', how='left')
+    df_c = so_25[so_25['EMPRENDIMIENTO'].isin(f_emp)] if f_emp else so_25.copy()
     
-    # Filtro Año 2025
-    so_25 = so_raw[so_raw['FECHA_DT'].dt.year == 2025].copy()
-    so_25 = so_25.merge(mae[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']], on='SKU', how='left')
-    
-    # Aplicar Filtro de Canal
-    df_c = so_25[so_25['EMPRENDIMIENTO'].isin(f_canal)] if f_canal else so_25.copy()
-    
-    # Cálculo de Factor de Escala Global
+    # Factor sobre el canal
     total_25 = df_c['CANTIDAD'].sum()
-    factor = vol_obj / total_25 if total_25 > 0 else 1
+    factor = obj_26 / total_25 if total_25 > 0 else 1
     
-    # Filtro de Búsqueda para la Vista
-    df_v = df_c[df_c['SKU'].str.contains(query) | df_c['DESCRIPCION'].str.contains(query, na=False)] if query else df_c.copy()
+    # Vista filtrada por búsqueda
+    df_v = df_c[df_c['SKU'].str.contains(q) | df_c['DESCRIPCION'].str.contains(q, na=False)] if q else df_c.copy()
 
-    # 6. SERIES TEMPORALES
-    meses_idx = range(1, 13)
-    meses_lbl = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    # --- 6. AGRUPACIÓN POR MES ---
+    m_idx = range(1, 13)
+    m_lbl = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"]
     
-    v_out_m = df_v.groupby(df_v['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
-    v_proy_m = (v_out_m * factor).round(0)
+    v_out = df_v.groupby(df_v['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(m_idx, fill_value=0)
+    v_proy = (v_out * factor).round(0)
 
-    # Sell In Procesamiento
-    si_raw['FECHA_DT'] = pd.to_datetime(si_raw['F_REF'] if 'F_REF' in si_raw.columns else si_raw.filter(like='FECHA').iloc[:,0], dayfirst=True, errors='coerce')
-    si_25 = si_raw[si_raw['FECHA_DT'].dt.year == 2025].copy()
-    if f_canal:
-        si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_canal)] if 'EMPRENDIMIENTO' in si_25.columns else si_25
-    si_v = si_25.merge(mae[['SKU', 'DESCRIPCION']], on='SKU', how='left')
-    if query:
-        si_v = si_v[si_v['SKU'].str.contains(query) | si_v['DESCRIPCION'].str.contains(query, na=False)]
-    v_in_m = si_v.groupby(si_v['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
+    # Sell In filtrado
+    si_v = si_25.copy()
+    if f_emp and 'EMPRENDIMIENTO' in si_v.columns: si_v = si_v[si_v['EMPRENDIMIENTO'].isin(f_emp)]
+    si_v = si_v.merge(mae[['SKU','DESCRIPCION']], on='SKU', how='left')
+    if q: si_v = si_v[si_v['SKU'].str.contains(q) | si_v['DESCRIPCION'].str.contains(q, na=False)]
+    v_in = si_v.groupby(si_v['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(m_idx, fill_value=0)
 
-    # 7. INTERFAZ DE USUARIO (TABS)
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE DE VENTAS", "🎯 MATRIZ DE COMPRA S&OP"])
-
-    with tab1:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Proyección en Vista", fmt(v_proy_m.sum()))
-        c2.metric("Factor de Ajuste", f"{factor:.4f}")
-        c3.metric("Sell Out Base 2025", fmt(v_out_m.sum()))
-
+    # --- 7. TABS ---
+    t1, t2 = st.tabs(["📊 PERFORMANCE", "🎯 ESTRATEGIA"])
+    
+    with t1:
+        st.metric("Factor Ajuste", f"{factor:.4f}")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=meses_lbl, y=v_in_m.tolist(), name="Sell In 2025", line=dict(color='#3366CC', width=2)))
-        fig.add_trace(go.Scatter(x=meses_lbl, y=v_out_m.tolist(), name="Sell Out 2025", line=dict(color='#FF9900', dash='dot')))
-        fig.add_trace(go.Scatter(x=meses_lbl, y=v_proy_m.tolist(), name="Proyección 2026", line=dict(color='#00FF00', width=4)))
-        
-        fig.update_layout(title="Curva de Demanda: Real 2025 vs Proyectado 2026", hovermode="x unified")
+        fig.add_trace(go.Scatter(x=m_lbl, y=v_in.values, name="Sell In 25", line=dict(color='#3366CC', width=2)))
+        fig.add_trace(go.Scatter(x=m_lbl, y=v_out.values, name="Sell Out 25", line=dict(color='#FF9900', dash='dot')))
+        fig.add_trace(go.Scatter(x=m_lbl, y=v_proy.values, name="Proy 26", line=dict(color='#00FF00', width=4)))
+        fig.update_layout(hovermode="x unified")
         st.plotly_chart(fig, use_container_width=True)
+        
+        # Tabla Detalle
+        df_res = pd.DataFrame({"Sell In 2025": v_in.values, "Sell Out 2025": v_out.values, "Proy 2026": v_proy.values}, index=m_lbl).T
+        df_res['TOTAL'] = df_res.sum(axis=1)
+        st.write("### 📋 Detalle Mensual")
+        st.dataframe(df_res.style.format(fmt), use_container_width=True)
 
-        st.subheader("📋 Resumen Mensual (Unidades)")
-        df_table = pd.DataFrame({
-            "Sell In 25": v_in_m.values,
-            "Sell Out 25": v_out_m.values,
-            "Proyección 26": v_proy_m.values
-        }, index=meses_lbl).T
-        st.dataframe(df_table.style.format(fmt), use_container_width=True)
-
-    with tab2:
-        st.subheader("🏢 Estrategia por Disciplina y Franja de Precio")
+    with t2:
+        # Matriz de compra
+        stk = stk_raw.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD':'STK'})
+        v25 = df_c.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD':'V25'})
+        mat = mae[['SKU','DESCRIPCION','DISCIPLINA','FRANJA_PRECIO']].merge(stk,on='SKU',how='left').merge(v25,on='SKU',how='left').fillna(0)
+        mat['V26'] = (mat['V25']*factor).round(0)
+        mat['SUG'] = ((mat['V26']/12*mos_obj)-mat['STK']).clip(lower=0).round(0)
         
-        # Agregación para Matriz
-        stk_agg = stk_raw.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK_ACTUAL'})
-        vta_agg = df_c.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
-        
-        # Unir todo al Maestro
-        matrix = mae[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(stk_agg, on='SKU', how='left').merge(vta_agg, on='SKU', how='left').fillna(0)
-        
-        matrix['VTA_PROY_26'] = (matrix['VTA_25'] * factor).round(0)
-        matrix['VENTA_MENSUAL'] = matrix['VTA_PROY_26'] / 12
-        matrix['MOS_ACTUAL'] = (matrix['STOCK_ACTUAL'] / matrix['VENTA_MENSUAL'].replace(0, 1)).round(1)
-        matrix['SUGERIDO_COMPRA'] = ((matrix['VENTA_MENSUAL'] * mos_target) - matrix['STOCK_ACTUAL']).clip(lower=0).round(0)
-
-        # Tabla Resumen
-        resumen_sop = matrix.groupby(['DISCIPLINA', 'FRANJA_PRECIO']).agg({
-            'VTA_25': 'sum',
-            'STOCK_ACTUAL': 'sum',
-            'VTA_PROY_26': 'sum',
-            'SUGERIDO_COMPRA': 'sum'
-        }).reset_index()
-        
-        st.dataframe(resumen_sop.sort_values('SUGERIDO_COMPRA', ascending=False).style.format({
-            'VTA_25': fmt, 'STOCK_ACTUAL': fmt, 'VTA_PROY_26': fmt, 'SUGERIDO_COMPRA': fmt
-        }), use_container_width=True)
-
-        st.markdown("---")
-        st.subheader("🔍 Detalle por SKU (Salud de Inventario)")
-        if query:
-            matrix = matrix[matrix['SKU'].str.contains(query) | matrix['DESCRIPCION'].str.contains(query, na=False)]
-        
-        st.dataframe(matrix.sort_values('VTA_PROY_26', ascending=False).style.format({
-            'STOCK_ACTUAL': fmt, 'VTA_25': fmt, 'VTA_PROY_26': fmt, 'SUGERIDO_COMPRA': fmt, 'MOS_ACTUAL': '{:.1f}'
-        }), use_container_width=True)
+        st.subheader("🏢 Resumen por Disciplina")
+        res = mat.groupby(['DISCIPLINA','FRANJA_PRECIO']).agg({'V25':'sum','STK':'sum','V26':'sum','SUG':'sum'}).reset_index()
+        st.dataframe(res.sort_values('SUG',ascending=False).style.format({c:fmt for c in res.columns if c not in ['DISCIPLINA','FRANJA_PRECIO']}), use_container_width=True)
 
 else:
-    st.info("Esperando conexión con los archivos de Google Drive...")
-
-# Fin del código
+    st.info("Esperando conexión con Drive...")
