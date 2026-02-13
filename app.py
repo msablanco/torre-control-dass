@@ -115,37 +115,29 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-# --- ESTRUCTURA DE PANTALLA FINAL (CORREGIDA) ---
+# --- BLOQUE FINAL DE RENDERIZADO (LÍNEA 200 EN ADELANTE) ---
+
 tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
 with tab1:
     st.subheader("Análisis de Demanda y Proyección")
     if 'fig_perf' in locals():
-        # Este es el ID 001
-        st.plotly_chart(fig_perf, use_container_width=True, key="chart_perf_unique_001")
+        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_tab_1_perf")
     else:
-        st.warning("No se pudo generar el gráfico de performance.")
+        st.warning("Gráfico de performance no disponible.")
 
 with tab2:
     st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
     if 'tactical' in locals() and not tactical.empty:
         st.dataframe(tactical.set_index('SKU'), use_container_width=True)
-    else:
-        st.info("Filtra los datos para ver la matriz de salud.")
 
 with tab3:
     st.subheader("🔮 Línea de Tiempo de Oportunidad")
     if 'tactical' in locals() and not tactical.empty:
         sku_list = tactical['SKU'].unique()
-        # El selector tiene su propia KEY
-        sku_sel = st.selectbox("Seleccionar SKU para simulación", sku_list, key="sb_sku_sim_unique_002")
+        sku_sel = st.selectbox("Seleccionar SKU", sku_list, key="selector_sku_tab_3")
         
         if sku_sel:
-            # --- Aquí va tu lógica de cálculo para fig_stk ---
-            # (Asegúrate de que el código que crea fig_stk esté aquí arriba)
-            
+            # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
-                # Este es el ID 003, ahora bien separado de la Tab 1
-                st.plotly_chart(fig_stk, use_container_width=True, key="chart_stk_sim_unique_003")
-    else:
-        st.info("Selecciona parámetros en el sidebar para activar la simulación.")
+                st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
