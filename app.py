@@ -121,47 +121,61 @@ if data:
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(width=4)))
         st.plotly_chart(fig, use_container_width=True)
 
-    # SOLAPA 2: TACTICAL (NORMALIZADA Y CON CÁLCULOS FIJOS)
+ # --- 1. REFERENCIA ESTÁTICA (EL CANAL) ---
+    # Filtramos Sell Out 2025 SOLO por Emprendimiento/Cliente para fijar el prorrateo
+    so_referencia = sell_out[sell_out['AÑO'] == 2025].copy()
+    if f_emp:
+        so_referencia = so_referencia[so_referencia['EMPRENDIMIENTO'].isin(f_emp)]
+    if f_cli:
+        so_referencia = so_referencia[so_referencia['CLIENTE_NAME'].isin(f_cli)]
+    
+    # Este es el total "estático" del canal seleccionado
+    vta_tot_referencia = so_referencia['CANTIDAD'].sum()
+    
+    # FACTOR FIJO: No cambia aunque busques un SKU después
+    factor_estatico = target_vol / vta_tot_referencia if vta_tot_referencia > 0 else 1
+
+    # --- 2. FILTRADO DE VISUALIZACIÓN (BÚSQUEDA / SKU) ---
+    m_filt = maestro.copy()
+    if search_query: 
+        m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
+    if f_franja: 
+        m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
+
+    # Filtros finales para mostrar en tablas
+    so_display = so_referencia[so_referencia['SKU'].isin(m_filt['SKU'])]
+    stk_display = stock[stock['SKU'].isin(m_filt['SKU'])]
+    ing_display = ingresos[ingresos['SKU'].isin(m_filt['SKU'])]
+
+    # --- TABS ---
+    tab1, tab2 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)"])
+
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # Agrupaciones por SKU (Normalización para evitar duplicados)
-        vta_sku = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT_25'})
-        stk_sku = stk_filt.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK_ACTUAL'})
-        ing_sku = ing_filt.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
+        # Agrupamos datos filtrados para visualización
+        vta_sku = so_display.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
+        stk_sku = stk_display.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
         
-        # Unir todo partiendo de un maestro único
-        tactical = m_filt.drop_duplicates(subset=['SKU']).merge(stk_sku, on='SKU', how='left') \
-                         .merge(vta_sku, on='SKU', how='left') \
-                         .merge(ing_sku, on='SKU', how='left').fillna(0)
+        # Unimos con el maestro deduplicado para evitar repeticiones
+        tactical = m_filt.drop_duplicates('SKU').merge(stk_sku, on='SKU', how='left') \
+                         .merge(vta_sku, on='SKU', how='left').fillna(0)
         
-        # Limpieza de filas vacías
-        tactical = tactical[(tactical['STOCK_ACTUAL'] > 0) | (tactical['SELL_OUT_25'] > 0) | (tactical['INGRESOS_FUTUROS'] > 0)]
-        
-        # CÁLCULOS USANDO EL FACTOR FIJO (Esto evita el error del prorrateo)
-        tactical['VTA_PROY_ANUAL'] = (tactical['SELL_OUT_25'] * factor_fijo).round(0)
+        # CÁLCULOS CON EL FACTOR ESTÁTICO
+        # Ahora la venta proyectada de un SKU no depende de si está solo o con otros en la tabla
+        tactical['VTA_PROY_ANUAL'] = (tactical['VTA_25'] * factor_estatico).round(0)
         tactical['VTA_PROY_MENSUAL'] = (tactical['VTA_PROY_ANUAL'] / 12).round(0)
         
-        # Evitar -inf en MOS
-        tactical['MOS'] = (tactical['STOCK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 99).round(1)
+        # Evitar el error de -inf meses visto en tus capturas
+        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 99).round(1)
         tactical['MOS'] = tactical['MOS'].fillna(0)
         
-        def clasificar(row):
-            if row['VTA_PROY_MENSUAL'] == 0 and row['STOCK_ACTUAL'] > 0: return "🔴 EXCESO"
-            if row['MOS'] < 2.5: return "🔥 QUIEBRE"
-            if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
-            return "✅ SALUDABLE"
-        
-        tactical['ESTADO'] = tactical.apply(clasificar, axis=1)
+        # Clasificación
+        tactical['ESTADO'] = tactical.apply(lambda r: "🔥 QUIEBRE" if r['MOS'] < 2.5 else ("⚠️ SOBRE-STOCK" if r['MOS'] > 8 else "✅ SALUDABLE"), axis=1)
 
-        # KPIs basados en la tabla normalizada
-        c1, c2 = st.columns(2)
-        c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
-        c2.metric("SKUs con Exceso", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
-
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STOCK_ACTUAL', 'SELL_OUT_25', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
+        # Mostrar tabla
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK_ACTUAL', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
                      .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
-
     # SOLAPA 3: ESCENARIOS
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
@@ -170,3 +184,4 @@ if data:
             sku_sel = st.selectbox("Seleccionar SKU", sku_list)
             m_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
             st.info(f"Análisis para: {m_sku['DESCRIPCION']} | Venta mensual proyectada: {m_sku['VTA_PROY_MENSUAL']:,.0f} unidades")
+
