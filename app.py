@@ -111,46 +111,55 @@ if data:
         st.plotly_chart(fig, use_container_width=True)
 
     # SOLAPA 2: TACTICAL (CORREGIDA SEGÚN PEDIDO)
-    with tab2:
-        st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
+   with tab2:
+    st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
+    
+    # 1. FILTRAR TODO POR EMPRENDIMIENTO PRIMERO
+    stk_f = stock[stock['SKU'].isin(m_filt['SKU'])]
+    if f_emp and 'EMPRENDIMIENTO' in stock.columns:
+        stk_f = stk_f[stk_f['EMPRENDIMIENTO'].isin(f_emp)]
         
-        # Agrupaciones por SKU para evitar duplicados
-        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT'})
-        si_sku_25 = si_filt[si_filt['AÑO'] == 2025].groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'SELL_IN'})
-        stk_sku = stk_filt.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
-        ing_sku = ing_filt.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
-        
-        # Consolidado único por SKU
-        tactical = m_filt.drop_duplicates(subset=['SKU']).merge(stk_sku, on='SKU', how='left') \
-                         .merge(vta_sku_25, on='SKU', how='left') \
-                         .merge(si_sku_25, on='SKU', how='left') \
-                         .merge(ing_sku, on='SKU', how='left').fillna(0)
-        
-        # FILTRO: Eliminar filas donde Sell In, Sell Out, Stock e Ingresos Futuros sean CERO
-        tactical = tactical[(tactical['SELL_IN'] > 0) | (tactical['SELL_OUT'] > 0) | 
-                            (tactical['STOCK'] > 0) | (tactical['INGRESOS_FUTUROS'] > 0)]
-        
-        # Cálculos de MOS
-        vta_tot_so = vta_sku_25['SELL_OUT'].sum()
-        factor = target_vol / vta_tot_so if vta_tot_so > 0 else 1
-        tactical['VTA_PROY_MENSUAL'] = ((tactical['SELL_OUT'] * factor) / 12).round(0)
-        tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf')], 99).round(1)
-        
-        def clasificar(row):
-            if row['VTA_PROY_MENSUAL'] == 0 and row['STOCK'] > 0: return "🔴 EXCESO"
-            if row['MOS'] < 2.5: return "🔥 QUIEBRE"
-            if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
-            return "✅ SALUDABLE"
-        
-        tactical['ESTADO'] = tactical.apply(clasificar, axis=1)
-        
-        # KPIs (Sin Stock Promedio/MOS)
-        c1, c2 = st.columns(2)
-        c1.metric("SKUs en Riesgo de Quiebre (Únicos)", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
-        c2.metric("SKUs con Exceso (Únicos)", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
+    ing_f = ingresos[ingresos['SKU'].isin(m_filt['SKU'])]
+    if f_emp and 'EMPRENDIMIENTO' in ingresos.columns:
+        ing_f = ing_f[ing_f['EMPRENDIMIENTO'].isin(f_emp)]
 
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STOCK', 'SELL_OUT', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
-                     .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
+    # 2. AGRUPAR PARA TENER 1 SOLA FILA POR SKU (EVITA REPETICIÓN)
+    stk_sku = stk_f.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
+    vta_sku = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT'})
+    ing_sku = ing_f.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
+    si_sku = si_filt[si_filt['AÑO'] == 2025].groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'SELL_IN'})
+
+    # 3. UNIR TODO PARTIENDO DE UN MAESTRO SIN DUPLICADOS
+    maestro_unico = m_filt.drop_duplicates(subset=['SKU'])
+    
+    tactical = maestro_unico.merge(stk_sku, on='SKU', how='left') \
+                            .merge(vta_sku, on='SKU', how='left') \
+                            .merge(ing_sku, on='SKU', how='left') \
+                            .merge(si_sku, on='SKU', how='left').fillna(0)
+
+    # 4. FILTRAR FILAS QUE NO TENGAN NINGÚN DATO (TU PEDIDO)
+    tactical = tactical[
+        (tactical['STOCK'] > 0) | 
+        (tactical['SELL_OUT'] > 0) | 
+        (tactical['SELL_IN'] > 0) | 
+        (tactical['INGRESOS_FUTUROS'] > 0)
+    ]
+
+    # 5. CÁLCULO DE MOS Y ESTADO
+    vta_tot_so = vta_sku['SELL_OUT'].sum()
+    factor = target_vol / vta_tot_so if vta_tot_so > 0 else 1
+    tactical['VTA_PROY_MENSUAL'] = ((tactical['SELL_OUT'] * factor) / 12).round(0)
+    
+    # Evitar el error de -inf meses
+    tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf')], 99).round(1)
+
+    # KPIs (Solo los que pediste)
+    c1, c2 = st.columns(2)
+    c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['MOS'] < 2.5]))
+    c2.metric("SKUs con Exceso", len(tactical[tactical['MOS'] > 8]))
+
+    # MOSTRAR TABLA FINAL
+    st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STOCK', 'SELL_OUT', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']], use_container_width=True)
 
     # SOLAPA 3: ESCENARIOS (Activa)
     with tab3:
@@ -160,3 +169,4 @@ if data:
             m_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
             st.write(f"Análisis para: {m_sku['DESCRIPCION']}")
             # Lógica de proyección de stock mensual...
+
