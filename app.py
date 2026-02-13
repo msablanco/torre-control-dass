@@ -10,6 +10,7 @@ from googleapiclient.http import MediaIoBaseDownload
 st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 def fmt_p(valor):
+    if pd.isna(valor): return "0"
     return f"{valor:,.0f}".replace(",", ".")
 
 # --- 2. SIDEBAR ---
@@ -45,11 +46,13 @@ def load_drive_data():
             df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU', 'CANT': 'CANTIDAD', 'QTY': 'CANTIDAD', 'UNIDADES': 'CANTIDAD'})
             if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
-            # PARCHE ESPECÍFICO PARA SELL IN WHOLESALE (Columna G suele ser la 7ma)
+            # PARCHE ESPECÍFICO PARA SELL IN (Forzamos detección de Fecha en B y Cantidad en G)
             if "SELL_IN_VENTAS" in name.upper():
-                if 'EMPRENDIMIENTO' not in df.columns:
-                    df['EMPRENDIMIENTO'] = 'WHOLESALE'
-                # Si 'CANTIDAD' no se detectó por nombre, intentamos por posición (Columna G es índice 6)
+                df['EMPRENDIMIENTO'] = 'WHOLESALE'
+                # Fecha: Forzamos Columna B (índice 1) si no hay una por nombre
+                if len(df.columns) >= 2:
+                    df = df.rename(columns={df.columns[1]: 'FECHA_REF'})
+                # Cantidad: Forzamos Columna G (índice 6) si no hay una por nombre
                 if 'CANTIDAD' not in df.columns and len(df.columns) >= 7:
                     df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
             
@@ -63,13 +66,12 @@ data = load_drive_data()
 
 if data:
     sell_out = data.get('Sell_Out', pd.DataFrame())
-    # Buscamos el archivo por el nuevo nombre informado
     sell_in = data.get('Sell_In_Ventas', data.get('Sell_In', pd.DataFrame()))
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
 
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else []
-    f_emp = st.sidebar.multiselect("Seleccionar Emprendimiento (Canal)", opciones_emp)
+    f_emp = st.sidebar.multiselect("Canal", opciones_emp)
     query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
 
     # --- 3. PROCESAMIENTO SELL OUT ---
@@ -97,18 +99,19 @@ if data:
     v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
     v_proy_26 = (v_out_25 * factor_escala).round(0)
 
-    # --- 6. SELL IN (AJUSTADO PARA WHOLESALE SOLAMENTE) ---
+    # --- 6. SELL IN ---
     v_in_25 = pd.Series(0, index=meses_idx)
     if not sell_in.empty:
-        col_f_in = next((c for c in sell_in.columns if any(x in c for x in ['FECHA', 'MES', 'DATE'])), None)
+        si_temp = sell_in.copy()
+        # Buscamos la columna de fecha (usando el nombre forzado 'FECHA_REF' o similares)
+        col_f_in = next((c for c in si_temp.columns if any(x in c for x in ['FECHA', 'MES', 'DATE', 'REF'])), None)
+        
         if col_f_in:
-            si_temp = sell_in.copy()
             si_temp['FECHA_DT'] = pd.to_datetime(si_temp[col_f_in], dayfirst=True, errors='coerce')
             si_25 = si_temp[si_temp['FECHA_DT'].dt.year == 2025].copy()
             si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
             si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
             
-            # Filtro de Canal: Como Sell_In_Ventas es solo Wholesale, solo aparece si Wholesale está seleccionado o si no hay selección
             if f_emp:
                 si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
             if query:
@@ -152,10 +155,11 @@ if data:
         tactical['V_PROY_26'] = (tactical['V25'] * factor_escala).round(0)
         tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12).round(0)
         tactical['MOS'] = (tactical['STK'] / (tactical['V_MENSUAL'].replace(0, 1))).round(1)
-        if query: tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
+        if query:
+            tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
+        
         st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK', 'V25', 'V_MENSUAL', 'MOS']].sort_values('V_MENSUAL', ascending=False).style.format({
             'STK': lambda x: fmt_p(x), 'V25': lambda x: fmt_p(x), 'V_MENSUAL': lambda x: fmt_p(x), 'MOS': "{:.1f}"
         }), use_container_width=True)
 else:
     st.info("Cargando datos...")
-
