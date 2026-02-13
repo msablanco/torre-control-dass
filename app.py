@@ -125,36 +125,41 @@ if f_emp:
     so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
 if f_cli:
     so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
-    # --- 4. MOTOR DE CÁLCULO (UNIFICADO) ---
-    meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
-    
-    vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
-    factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
-    
-    vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
-    stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
-    
-    if not ingresos.empty:
-        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'ING_FUTUROS'})
-    else:
-        ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTUROS'])
+  # --- 4. MOTOR DE CÁLCULO DE GRÁFICOS (LO QUE RECUPERA LA VISIBILIDAD) ---
 
-    tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
-    tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
-    
-    def calcular_mos_safe(row):
-        if row['VTA_PROY_MENSUAL'] <= 0: return 0.0
-        return round(row['STK_ACTUAL'] / row['VTA_PROY_MENSUAL'], 1)
-    
-    tactical['MOS'] = tactical.apply(calcular_mos_safe, axis=1)
+# 1. Agrupamos los datos filtrados por mes
+si_graf = si_filt.groupby('MES_STR')['PARES'].sum().reset_index()
+so_graf = so_filt.groupby('MES_STR')['PARES'].sum().reset_index()
 
-    def clasificar_salud(row):
-        if row['VTA_PROY_MENSUAL'] == 0: return "⚪ SIN VENTA"
-        if row['MOS'] < 2.5: return "🔥 QUIEBRE"
-        if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
-        return "✅ SALUDABLE"
-    
-    tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
+# 2. Creamos el gráfico de Performance
+import plotly.graph_objects as go
+
+fig_perf = go.Figure()
+
+# Línea de Sell In
+fig_perf.add_trace(go.Scatter(
+    x=si_graf['MES_STR'], y=si_graf['PARES'],
+    name='Sell In (Ingreso)', mode='lines+markers',
+    line=dict(color='#1f77b4', width=3)
+))
+
+# Línea de Sell Out
+fig_perf.add_trace(go.Scatter(
+    x=so_graf['MES_STR'], y=so_graf['PARES'],
+    name='Sell Out (Salida)', mode='lines+markers',
+    line=dict(color='#ff7f0e', width=3)
+))
+
+fig_perf.update_layout(
+    title="Evolución Mensual de Ventas",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+# --- 5. TABLA TÁCTICA (Para la Tab 2) ---
+# Aquí calculamos lo que necesita la pestaña TACTICAL
+tactical = m_filt.copy()
+# (Asegúrate de que aquí vayan tus cálculos de Stock, MOS, etc.)
 
 # --- BLOQUE FINAL DE RENDERIZADO (LÍNEA 200 EN ADELANTE) ---
 
@@ -182,6 +187,7 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
 
 
