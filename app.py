@@ -10,21 +10,10 @@ from googleapiclient.http import MediaIoBaseDownload
 st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 def fmt_p(valor):
-    if pd.isna(valor): return "0"
+    if pd.isna(valor) or valor == 0: return "0"
     return f"{valor:,.0f}".replace(",", ".")
 
-# --- 2. SIDEBAR ---
-st.sidebar.header("🎯 CONTROL DE VOLUMEN")
-vol_obj = st.sidebar.number_input("Volumen Objetivo 2026", value=1000000, step=50000)
-validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=True)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ PARÁMETROS DE COMPRA")
-mos_objetivo = st.sidebar.slider("MOS Objetivo (Meses)", 1, 6, 3)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 FILTROS")
-
+# --- 2. CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_drive_data():
     try:
@@ -46,15 +35,16 @@ def load_drive_data():
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
             df.columns = [str(c).strip().upper() for c in df.columns]
             
-            df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU', 'CANT': 'CANTIDAD', 'QTY': 'CANTIDAD', 'UNIDADES': 'CANTIDAD'})
+            # Normalización SKU
+            for col in ['ARTICULO', 'CODIGO', 'SKU_ID']:
+                if col in df.columns: df = df.rename(columns={col: 'SKU'})
             if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
+            # SELL IN: B es Fecha (1), G es Cantidad (6)
             if "SELL_IN_VENTAS" in name.upper():
                 df['EMPRENDIMIENTO'] = 'WHOLESALE'
-                if 'CANTIDAD' not in df.columns and len(df.columns) >= 7:
-                    df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
-                if 'FECHA' not in df.columns and len(df.columns) >= 2:
-                    df = df.rename(columns={df.columns[1]: 'FECHA'})
+                if len(df.columns) >= 2: df = df.rename(columns={df.columns[1]: 'FECHA_REF'})
+                if len(df.columns) >= 7: df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
             dfs[name] = df
         return dfs
     except Exception as e:
@@ -68,94 +58,120 @@ if data:
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
 
+    # --- 3. FILTROS ---
+    st.sidebar.header("🎯 CONTROL SOP")
+    vol_obj = st.sidebar.number_input("Volumen Objetivo 2026", value=1000000, step=50000)
+    mos_objetivo = st.sidebar.slider("MOS Objetivo (Meses)", 1, 6, 3)
+    
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else []
     f_emp = st.sidebar.multiselect("Canal", opciones_emp, default=["WHOLESALE"] if "WHOLESALE" in opciones_emp else [])
     query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
 
-    # --- 3. PROCESAMIENTO SELL OUT ---
-    col_f_so = next((c for c in sell_out.columns if 'FECHA' in c or 'MES' in c), None)
-    if col_f_so:
-        sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f_so], dayfirst=True, errors='coerce')
-        sell_out['MES_NUM'] = sell_out['FECHA_DT'].dt.month
-        sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
-
-    so_25 = sell_out[sell_out['AÑO'] == 2025].copy()
+    # --- 4. PROCESAMIENTO ---
+    # Procesar Sell Out
+    sell_out['FECHA_DT'] = pd.to_datetime(sell_out.filter(like='FECHA').iloc[:,0], dayfirst=True, errors='coerce')
+    so_25 = sell_out[(sell_out['FECHA_DT'].dt.year == 2025) & (sell_out['EMPRENDIMIENTO'].isin(f_emp))].copy()
     so_25 = so_25.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
-    df_canal = so_25[so_25['EMPRENDIMIENTO'].isin(f_emp)] if f_emp else so_25.copy()
+    if query: so_25 = so_25[so_25['SKU'].str.contains(query) | so_25['DESCRIPCION'].str.contains(query, na=False)]
     
-    df_vista = df_canal.copy()
-    if query: df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query, na=False)]
-
-    base_escala = df_canal['CANTIDAD'].sum() if validar_fijar else df_vista['CANTIDAD'].sum()
-    factor_escala = vol_obj / base_escala if base_escala > 0 else 1
+    factor = vol_obj / so_25['CANTIDAD'].sum() if so_25['CANTIDAD'].sum() > 0 else 1
     meses_idx = range(1, 13)
     meses_labels = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
-    v_proy_26 = (v_out_25 * factor_escala).round(0)
+    
+    v_out_25 = so_25.groupby(so_25['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
+    v_proy_26 = (v_out_25 * factor).round(0)
 
-    # --- 4. SELL IN (FORZAR COLUMNA B Y FORMATO) ---
+    # Procesar Sell In
     v_in_25 = pd.Series(0, index=meses_idx)
     if not sell_in_ws.empty:
         si_temp = sell_in_ws.copy()
-        if 'FECHA' in si_temp.columns:
-            si_temp['FECHA_DT'] = pd.to_datetime(si_temp['FECHA'], dayfirst=True, errors='coerce')
-            si_25 = si_temp[si_temp['FECHA_DT'].dt.year == 2025].copy()
-            si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
-            if f_emp and 'EMPRENDIMIENTO' in si_25.columns: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
-            if query: si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
-            v_in_25 = si_25.groupby(si_25['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
+        si_temp['FECHA_DT'] = pd.to_datetime(si_temp['FECHA_REF'], dayfirst=True, errors='coerce')
+        si_25 = si_temp[si_temp['FECHA_DT'].dt.year == 2025].copy()
+        si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
+        if query: si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
+        v_in_25 = si_25.groupby(si_25['FECHA_DT'].dt.month)['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
 
     # --- 5. TABS ---
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE (2025)", "🎯 PLANEAMIENTO (2026)"])
+    tab1, tab2 = st.tabs(["📊 PERFORMANCE 2025", "🎯 PLANEAMIENTO 2026"])
 
     with tab1:
         c1, c2, c3 = st.columns(3)
         c1.metric("Proyección 2026", fmt_p(v_proy_26.sum()))
-        c2.metric("Objetivo", fmt_p(vol_obj))
-        c3.metric("Escala", f"{factor_escala:.4f}")
+        c2.metric("Objetivo Global", fmt_p(vol_obj))
+        c3.metric("Factor Escala", f"{factor:.4f}")
+        
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025", line=dict(color='#3366CC', width=3)))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_out_25, name="Sell Out 2025", line=dict(color='#FF9900', dash='dot')))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_proy_26, name="Proy. 2026", line=dict(width=4, color='#00FF00')))
         st.plotly_chart(fig, use_container_width=True)
 
+        st.subheader("📋 Detalle Mensual Histórico vs Proyectado")
         df_m = pd.DataFrame({"Mes": meses_labels, "Sell In 2025": v_in_25.values, "Sell Out 2025": v_out_25.values, "Proy 2026": v_proy_26.values}).set_index("Mes")
         df_m.loc['TOTAL'] = df_m.sum()
-        st.dataframe(df_m.T.style.format(lambda x: fmt_p(x)), use_container_width=True)
-
-    with tab2:
-        st.subheader("📝 Matriz S&OP")
+        st.dataframe(df_m.T.style.format(lambda x: fmt_p(x)), use_container_width=True)with tab2:
+        st.subheader("📝 Matriz de Planeamiento S&OP")
+        
+        # 1. Consolidación de Stock (DASS)
         stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK_DASS'})
-        si_25_total = pd.DataFrame(columns=['SKU', 'SELL_IN_2025'])
-        if not sell_in_ws.empty and 'FECHA' in sell_in_ws.columns:
-            si_calc = sell_in_ws.copy()
-            si_calc['FECHA_DT'] = pd.to_datetime(si_calc['FECHA'], dayfirst=True, errors='coerce')
-            si_25_total = si_calc[si_calc['FECHA_DT'].dt.year == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_IN_2025'})
+        
+        # 2. Consolidación de Sell In 2025 (desde los datos procesados en Parte 1)
+        si_25_total = si_temp[si_temp['FECHA_DT'].dt.year == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_IN_2025'})
+        
+        # 3. Consolidación de Sell Out 2025 (desde los datos filtrados en Parte 1)
+        so_25_total = so_25.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT_2025'})
 
-        so_25_total = df_canal.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SELL_OUT_2025'})
+        # 4. Cruce de datos con el Maestro
         matriz = maestro[['SKU', 'DESCRIPCION']].merge(stk_sku, on='SKU', how='left')
         matriz = matriz.merge(si_25_total, on='SKU', how='left').merge(so_25_total, on='SKU', how='left').fillna(0)
-        matriz['SELL_OUT_2026'] = (matriz['SELL_OUT_2025'] * factor_escala).round(0)
-        matriz['SELL_IN_2026'] = 0 
-        matriz['INGRESOS_FUTUROS'] = 0 
-        matriz['V_MENSUAL_26'] = matriz['SELL_OUT_2026'] / 12
-        matriz['MOS'] = (matriz['STOCK_DASS'] / matriz['V_MENSUAL_26'].replace(0, 1)).round(1)
-        matriz['COMPRA_SUGERIDA'] = ((matriz['V_MENSUAL_26'] * mos_objetivo) - matriz['STOCK_DASS']).clip(lower=0).round(0)
-        if query: matriz = matriz[matriz['SKU'].str.contains(query) | matriz['DESCRIPCION'].str.contains(query, na=False)]
         
-        cols = ['SKU', 'DESCRIPCION', 'STOCK_DASS', 'SELL_IN_2025', 'SELL_OUT_2025', 'SELL_IN_2026', 'SELL_OUT_2026', 'INGRESOS_FUTUROS', 'MOS', 'COMPRA_SUGERIDA']
-        st.dataframe(matriz[cols].sort_values('SELL_OUT_2026', ascending=False).style.format({
-            'STOCK_DASS': '{:,.0f}', 'SELL_IN_2025': '{:,.0f}', 'SELL_OUT_2025': '{:,.0f}', 
-            'SELL_IN_2026': '{:,.0f}', 'SELL_OUT_2026': '{:,.0f}', 'INGRESOS_FUTUROS': '{:,.0f}',
-            'COMPRA_SUGERIDA': '{:,.0f}', 'MOS': '{:.1f}'
-        }), use_container_width=True)
+        # 5. Cálculos 2026
+        matriz['SELL_OUT_2026'] = (matriz['SELL_OUT_2025'] * factor).round(0)
+        matriz['SELL_IN_2026'] = 0  # Placeholder para ingresos confirmados
+        matriz['INGRESOS_FUTUROS'] = 0  # Placeholder para tránsitos/OC
+        
+        # Venta mensual proyectada para el cálculo de MOS
+        matriz['V_MENSUAL_26'] = matriz['SELL_OUT_2026'] / 12
+        
+        # Cálculo de MOS (Meses de Cobertura)
+        matriz['MOS'] = (matriz['STOCK_DASS'] / matriz['V_MENSUAL_26'].replace(0, 1)).round(1)
+        
+        # Lógica de Compra Sugerida: (Venta Mensual * MOS Objetivo) - Stock - Ingresos Futuros
+        matriz['COMPRA_SUGERIDA'] = ((matriz['V_MENSUAL_26'] * mos_objetivo) - matriz['STOCK_DASS'] - matriz['INGRESOS_FUTUROS']).clip(lower=0).round(0)
+        
+        # Filtro de búsqueda en la tabla
+        if query:
+            matriz = matriz[matriz['SKU'].str.contains(query) | matriz['DESCRIPCION'].str.contains(query, na=False)]
+        
+        # Columnas finales solicitadas
+        cols_finales = [
+            'SKU', 'DESCRIPCION', 'STOCK_DASS', 'SELL_IN_2025', 'SELL_OUT_2025', 
+            'SELL_IN_2026', 'SELL_OUT_2026', 'INGRESOS_FUTUROS', 'MOS', 'COMPRA_SUGERIDA'
+        ]
+        
+        # Mostrar Tabla con formato de miles
+        st.dataframe(
+            matriz[cols_finales].sort_values('SELL_OUT_2026', ascending=False).style.format({
+                'STOCK_DASS': '{:,.0f}', 'SELL_IN_2025': '{:,.0f}', 'SELL_OUT_2025': '{:,.0f}', 
+                'SELL_IN_2026': '{:,.0f}', 'SELL_OUT_2026': '{:,.0f}', 'INGRESOS_FUTUROS': '{:,.0f}',
+                'COMPRA_SUGERIDA': '{:,.0f}', 'MOS': '{:.1f}'
+            }), 
+            use_container_width=True
+        )
 
-        # EXPORTACIÓN SEGURA
-        try:
-            output = io.BytesIO()
-            matriz[cols].to_excel(output, index=False)
-            st.download_button("📥 Descargar Excel S&OP", output.getvalue(), "Fila_SOP_2026.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        except:
-            st.download_button("📥 Descargar CSV (Alternativo)", matriz[cols].to_csv(index=False).encode('utf-8'), "Fila_SOP_2026.csv", "text/csv")
+        # 6. Botón de Exportación Segura a CSV
+        st.markdown("---")
+        csv_buffer = io.StringIO()
+        matriz[cols_finales].to_csv(csv_buffer, index=False, sep=';', encoding='utf-8-sig')
+        
+        st.download_button(
+            label="📥 Descargar Matriz S&OP (Excel/CSV)",
+            data=csv_buffer.getvalue(),
+            file_name="Fila_SOP_Planeamiento_2026.csv",
+            mime="text/csv",
+            help="Descarga el planeamiento completo compatible con Excel"
+        )
 else:
-    st.info("Cargando datos de Drive...")
+    # Mensaje de espera si los datos no cargan
+    st.warning("⚠️ No se detectaron archivos válidos en la carpeta de Google Drive configurada.")
+    st.info("Asegúrate de que los archivos .csv tengan los nombres: 'Sell_Out', 'Sell_In_Ventas', 'Stock' y 'Maestro_Productos'.")
