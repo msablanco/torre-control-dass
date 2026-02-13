@@ -139,70 +139,97 @@ if data:
                 tabla_disc['TOTAL'] = tabla_disc.sum(axis=1)
                 st.dataframe(tabla_disc.sort_values('TOTAL', ascending=False).style.format("{:,.0f}"), use_container_width=True)
 
-# --- CONTINUACIÓN DEL CÓDIGO (Tab 2 y Tab 3) ---
+# --- PREPARACIÓN DE DATOS GLOBALES PARA TABS ---
+    meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
+    
+    # Cálculo de Venta Mensual Proyectada por SKU (Basado en el Target Vol del Slider)
+    vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
+    factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
+    
+    vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
+    stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
+    
+    # Consolidamos Ingresos Futuros (Asegúrate que el archivo 'Ingresos' esté cargado)
+    if not ingresos.empty:
+        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'ING_FUTUROS'})
+    else:
+        ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTUROS'])
 
-# ... (Mantener todo el motor de la Solapa 1 igual)
+    # Unificamos todo en una tabla maestra para Tactical
+    tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
+    
+    # Cálculo de MOS y Venta Proyectada
+    tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
+    
+    def calcular_mos_safe(row):
+        if row['VTA_PROY_MENSUAL'] <= 0: return 0.0
+        return round(row['STK_ACTUAL'] / row['VTA_PROY_MENSUAL'], 1)
+    
+    tactical['MOS'] = tactical.apply(calcular_mos_safe, axis=1)
 
+    def clasificar_salud(row):
+        if row['VTA_PROY_MENSUAL'] == 0: return "⚪ SIN VENTA"
+        if row['MOS'] < 2.5: return "🔥 QUIEBRE"
+        if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
+        return "✅ SALUDABLE"
+    
+    tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
+
+    # --- RENDERIZADO DE TABS ---
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # 1. Preparación de datos de Venta e Ingresos
-        vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
-        factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
-        
-        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
-        
-        # Consolidamos Ingresos Futuros (lo que está en el archivo Ingresos.csv para el resto del año)
-        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'ING_FUTUROS'})
-        
-        # 2. Unión de datos (Merge)
-        tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
-        
-        # 3. Cálculos de Proyección y MOS (Corrigiendo el error 'inf')
-        tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
-        
-        # Usamos una función para evitar la división por cero que causaba el "-inf"
-        def calcular_mos(row):
-            if row['VTA_PROY_MENSUAL'] <= 0:
-                return 0.0
-            return round(row['STK_ACTUAL'] / row['VTA_PROY_MENSUAL'], 1)
-            
-        tactical['MOS'] = tactical.apply(calcular_mos, axis=1)
-        
-        # 4. Clasificación de Salud
-        def clasificar_salud(row):
-            if row['VTA_PROY_MENSUAL'] == 0: return "⚪ SIN VENTA"
-            if row['MOS'] < 2.5: return "🔥 QUIEBRE"
-            if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
-            return "✅ SALUDABLE"
-        
-        tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
-        
-        # 5. KPIs de Cabecera (Corregidos)
         c1, c2, c3 = st.columns(3)
         c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
         c2.metric("SKUs con Sobre-Stock", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
-        
-        mos_promedio = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
-        c3.metric("MOS Promedio de Cartera", f"{mos_promedio:.1f} meses")
+        mos_medio = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
+        c3.metric("MOS Promedio", f"{mos_medio:.1f} meses")
 
-        # 6. Mostrar Tabla sin columna de índice y con Ingresos Futuros
+        # Tabla limpia: sin índice numérico, SKU como primera columna
         cols_finales = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
+        df_tab2 = tactical[cols_finales].sort_values('VTA_PROY_MENSUAL', ascending=False)
         
-        st.dataframe(
-            tactical[cols_finales].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), 
-            use_container_width=True
-        )
+        st.dataframe(df_tab2.set_index('SKU'), use_container_width=True)
 
     with tab3:
-        # (Aquí va la lógica de la Línea de Tiempo de Oportunidad que ya validamos)
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
+        
         sku_lista = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
-        sku_sel = st.selectbox("Seleccionar Producto para ver agotamiento", sku_lista)
+        sku_sel = st.selectbox("Seleccionar Producto para ver flujo de stock", sku_lista)
         
         if sku_sel:
-            # Reutilizamos el motor de la versión anterior para el gráfico de agotamiento
-            # ... (Lógica de gráfico Plotly)
-            st.write(f"Análisis detallado de flujo para {sku_sel}")
-
+            # Datos del SKU seleccionado
+            dat_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
+            stk_ini = dat_sku['STK_ACTUAL']
+            vta_m = dat_sku['VTA_PROY_MENSUAL']
+            
+            # Ingresos mes a mes para este SKU
+            ing_mes = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_STR')['UNIDADES'].sum()
+            
+            meses_eje = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
+            stk_evolucion = []
+            curr_stk = stk_ini
+            
+            for i in range(1, 13):
+                m_code = str(i).zfill(2)
+                arribo = ing_mes.get(m_code, 0)
+                curr_stk = (curr_stk + arribo) - vta_m
+                stk_evolucion.append(max(0, curr_stk))
+            
+            fig_stk = go.Figure()
+            # Área de stock
+            fig_stk.add_trace(go.Scatter(x=meses_eje, y=stk_evolucion, name="Stock Proyectado", 
+                                         line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
+            # Barras de ingresos
+            fig_stk.add_trace(go.Bar(x=meses_eje, y=[ing_mes.get(str(i).zfill(2), 0) for i in range(1, 13)], 
+                                     name="Ingresos 2026", marker_color='#2ecc71', opacity=0.7))
+            
+            fig_stk.add_hline(y=vta_m * 2, line_dash="dash", line_color="gray", annotation_text="Stock Seguridad (2 meses)")
+            
+            fig_stk.update_layout(title=f"Evolución de Disponibilidad: {sku_sel}", hovermode="x unified")
+            st.plotly_chart(fig_stk, use_container_width=True)
+            
+            if min(stk_evolucion) == 0:
+                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total según la proyección actual.")
+            else:
+                st.success(f"✅ El abastecimiento de {sku_sel} parece cubierto para el volumen objetivo.")
