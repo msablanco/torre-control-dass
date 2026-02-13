@@ -59,17 +59,17 @@ if data:
                 df['MES_STR'] = df['FECHA_DT'].dt.strftime('%m')
                 df['AÑO'] = df['FECHA_DT'].dt.year
 
-    # --- 2. SIDEBAR: PARÁMETROS ---
+ # --- 2. SIDEBAR: PARÁMETROS ---
     st.sidebar.title("🎮 PARÁMETROS")
-    search_query = st.sidebar.text_input("🔍 Buscar SKU o Descripción", "").upper()
-    target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 500000, 1500000, 1000000, step=50000)
     
-    st.sidebar.markdown("---")
-    opciones_emp = sorted(list(set(sell_in['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_in.columns else []) | 
-                          set(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else [])
+    # Creamos dos conjuntos vacíos
+    set_in = set(sell_in['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_in.columns else set()
+    set_out = set(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else set()
+    
+    # Los unimos correctamente usando el símbolo | entre dos conjuntos (sets)
+    opciones_emp = sorted(list(set_in | set_out))
+    
     f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
-    f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
-    f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if 'FRANJA_PRECIO' in maestro.columns else [])
 
     # --- 3. LÓGICA DE FILTRADO ---
     m_filt = maestro.copy()
@@ -141,3 +141,4 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
