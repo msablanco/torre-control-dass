@@ -174,62 +174,111 @@ if data:
         return "✅ SALUDABLE"
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
+# --- 5. MOTOR DE CÁLCULO (FUERA DE LAS PESTAÑAS) ---
+    meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
+    
+    # Cálculo de Venta e Ingresos para Matriz de Salud
+    vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
+    factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
+    
+    vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
+    stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
+    
+    if not ingresos.empty:
+        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'ING_FUTUROS'})
+    else:
+        ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTUROS'])
 
-    # --- RENDERIZADO DE TABS ---
+    # Creación de Tabla Master Tactical
+    tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
+    tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
+    
+    def calcular_mos_safe(row):
+        if row['VTA_PROY_MENSUAL'] <= 0: return 0.0
+        return round(row['STK_ACTUAL'] / row['VTA_PROY_MENSUAL'], 1)
+    
+    tactical['MOS'] = tactical.apply(calcular_mos_safe, axis=1)
+
+    def clasificar_salud(row):
+        if row['VTA_PROY_MENSUAL'] == 0: return "⚪ SIN VENTA"
+        if row['MOS'] < 2.5: return "🔥 QUIEBRE"
+        if row['MOS'] > 8: return "⚠️ SOBRE-STOCK"
+        return "✅ SALUDABLE"
+    
+    tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
+
+    # --- 6. RENDERIZADO DE TABS (BLINDADO) ---
+    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
+
+    with tab1:
+        st.subheader("Curva de Demanda y Forecast 2026")
+        si_25_g = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
+        so_25_g = so_filt[so_filt['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index()
+        
+        # total_so_25 viene del motor de arriba
+        if vta_tot_25 > 0:
+            so_25_g['PROY_2026'] = ((so_25_g['CANTIDAD'] / vta_tot_25) * target_vol).round(0)
+        else:
+            so_25_g['PROY_2026'] = 0
+
+        base_meses = pd.DataFrame({'MES_STR': [str(i).zfill(2) for i in range(1, 13)]})
+        df_plot = base_meses.merge(si_25_g, on='MES_STR', how='left').merge(so_25_g, on='MES_STR', how='left').fillna(0)
+        df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
+        fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
+        fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### 📋 Detalle Mensual")
+        df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
+        df_t1.columns = ['Mes', 'Sell In 2025', 'Sell Out 2025', 'Proyección 2026']
+        df_t1 = df_t1.set_index('Mes').T
+        df_t1['TOTAL'] = df_t1.sum(axis=1)
+        st.dataframe(df_t1.style.format("{:,.0f}"), use_container_width=True)
+
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-        
         c1, c2, c3 = st.columns(3)
         c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
         c2.metric("SKUs con Sobre-Stock", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
-        mos_medio = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
-        c3.metric("MOS Promedio", f"{mos_medio:.1f} meses")
+        mos_m = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
+        c3.metric("MOS Promedio", f"{mos_m:.1f} meses")
 
-        # Tabla limpia: sin índice numérico, SKU como primera columna
-        cols_finales = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
-        df_tab2 = tactical[cols_finales].sort_values('VTA_PROY_MENSUAL', ascending=False)
-        
-        st.dataframe(df_tab2.set_index('SKU'), use_container_width=True)
+        cols_f = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
+        st.dataframe(tactical[cols_f].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
 
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
-        
-        sku_lista = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
-        sku_sel = st.selectbox("Seleccionar Producto para ver flujo de stock", sku_lista)
+        sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
+        sku_sel = st.selectbox("Seleccionar SKU para análisis de flujo", sku_list)
         
         if sku_sel:
-            # Datos del SKU seleccionado
-            dat_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
-            stk_ini = dat_sku['STK_ACTUAL']
-            vta_m = dat_sku['VTA_PROY_MENSUAL']
+            dat = tactical[tactical['SKU'] == sku_sel].iloc[0]
+            ing_m = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_STR')['UNIDADES'].sum()
             
-            # Ingresos mes a mes para este SKU
-            ing_mes = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_STR')['UNIDADES'].sum()
-            
-            meses_eje = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
-            stk_evolucion = []
-            curr_stk = stk_ini
+            mes_eje = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
+            stk_ev = []
+            curr = dat['STK_ACTUAL']
             
             for i in range(1, 13):
                 m_code = str(i).zfill(2)
-                arribo = ing_mes.get(m_code, 0)
-                curr_stk = (curr_stk + arribo) - vta_m
-                stk_evolucion.append(max(0, curr_stk))
+                arribo = ing_m.get(m_code, 0)
+                curr = (curr + arribo) - dat['VTA_PROY_MENSUAL']
+                stk_ev.append(max(0, curr))
             
             fig_stk = go.Figure()
-            # Área de stock
-            fig_stk.add_trace(go.Scatter(x=meses_eje, y=stk_evolucion, name="Stock Proyectado", 
-                                         line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
-            # Barras de ingresos
-            fig_stk.add_trace(go.Bar(x=meses_eje, y=[ing_mes.get(str(i).zfill(2), 0) for i in range(1, 13)], 
-                                     name="Ingresos 2026", marker_color='#2ecc71', opacity=0.7))
+            fig_stk.add_trace(go.Scatter(x=mes_eje, y=stk_ev, name="Stock", line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
+            fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos 2026", marker_color='#2ecc71', opacity=0.7))
+            fig_stk.add_hline(y=dat['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Seguridad")
             
-            fig_stk.add_hline(y=vta_m * 2, line_dash="dash", line_color="gray", annotation_text="Stock Seguridad (2 meses)")
-            
-            fig_stk.update_layout(title=f"Evolución de Disponibilidad: {sku_sel}", hovermode="x unified")
+            fig_stk.update_layout(hovermode="x unified")
             st.plotly_chart(fig_stk, use_container_width=True)
             
-            if min(stk_evolucion) == 0:
-                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total según la proyección actual.")
+            if min(stk_ev) == 0:
+                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total.")
             else:
-                st.success(f"✅ El abastecimiento de {sku_sel} parece cubierto para el volumen objetivo.")
+                st.success(f"✅ Abastecimiento cubierto para {sku_sel}.")
+else:
+    st.info("Cargando datos desde Google Drive...")
