@@ -86,21 +86,48 @@ if data:
     # --- 4. DASHBOARD ---
     tab1, tab2, tab3 = st.tabs(["📊 Estrategia de Mix", "⚡ Tactical & MOS", "📈 Línea de Tiempo SKU"])
 
-    with tab1:
+  with tab1:
         st.subheader("Análisis de Salud del Mix (Sell In vs Sell Out)")
+        
+        # Función corregida y robusta para evitar el ValueError
+        def get_mix_data_safe(df_base, col_maestro):
+            if df_base.empty or maestro.empty:
+                return pd.DataFrame()
+            
+            # Unimos solo las columnas necesarias
+            # Eliminamos la columna del maestro si ya existe en df_base para evitar duplicados
+            cols_to_use = [c for c in m_filt.columns if c not in df_base.columns or c == 'SKU']
+            temp = df_base.merge(m_filt[cols_to_use], on='SKU', how='inner')
+            
+            if temp.empty:
+                return pd.DataFrame()
+            
+            val_col = 'UNIDADES' if 'UNIDADES' in temp.columns else 'CANTIDAD'
+            # Agrupamos y sumamos
+            return temp.groupby(col_maestro)[val_col].sum().reset_index()
+
         c1, c2, c3 = st.columns(3)
         
-        # Lógica para comparar pesos de segmentos
-        def get_mix_data(df_base, col):
-            temp = df_base.merge(m_filt, on='SKU', how='inner')
-            return temp.groupby(col)['UNIDADES' if 'UNIDADES' in temp.columns else 'CANTIDAD'].sum().reset_index()
-
         with c1:
-            st.plotly_chart(px.pie(get_mix_data(sell_in, 'DISCIPLINA'), values='UNIDADES', names='DISCIPLINA', title="Mix Sell In (Venta Dass)", hole=0.4))
+            df_si = get_mix_data_safe(sell_in, 'DISCIPLINA')
+            if not df_si.empty:
+                st.plotly_chart(px.pie(df_si, values=df_si.columns[1], names='DISCIPLINA', title="Mix Sell In (Venta Dass)", hole=0.4))
+            else:
+                st.info("No hay datos para Sell In")
+
         with c2:
-            st.plotly_chart(px.pie(get_mix_data(sell_out, 'CANTIDAD'), values='CANTIDAD', names='GENERO', title="Mix Sell Out (Consumidor)", hole=0.4))
+            df_so = get_mix_data_safe(sell_out, 'GENERO')
+            if not df_so.empty:
+                st.plotly_chart(px.pie(df_so, values=df_so.columns[1], names='GENERO', title="Mix Sell Out (Consumidor)", hole=0.4))
+            else:
+                st.info("No hay datos para Sell Out")
+
         with c3:
-            st.plotly_chart(px.pie(get_mix_data(sell_in, 'FRANJA_PRECIO'), values='UNIDADES', names='FRANJA_PRECIO', title="Mix Franja de Precio", hole=0.4))
+            df_fp = get_mix_data_safe(sell_in, 'FRANJA_PRECIO')
+            if not df_fp.empty:
+                st.plotly_chart(px.pie(df_fp, values=df_fp.columns[1], names='FRANJA_PRECIO', title="Mix Franja de Precio", hole=0.4))
+            else:
+                st.info("Falta Franja de Precio en Maestro")
 
     with tab2:
         st.subheader("Ranking de Velocidad (MOS)")
@@ -163,3 +190,4 @@ if data:
 
 else:
     st.info("Esperando archivos en Drive...")
+
