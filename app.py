@@ -88,8 +88,15 @@ f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
 opciones_cli = sorted(sell_in['CLIENTE_NAME'].unique()) if 'CLIENTE_NAME' in sell_in.columns else []
 f_cli = st.sidebar.multiselect("Clientes", opciones_cli)
 
-# Definimos f_franja (Franja de Precio)
-opciones_franja = sorted(maestro['FRANJA_PRECIO'].unique()) if 'FRANJA_PRECIO' in maestro.columns else []
+# --- DEFINICIÓN SEGURA DE FRANJA DE PRECIO ---
+if 'FRANJA_PRECIO' in maestro.columns:
+    # 1. Obtenemos los valores únicos
+    u_franja = maestro['FRANJA_PRECIO'].unique()
+    # 2. Convertimos todo a texto y quitamos los valores nulos (NaN)
+    opciones_franja = sorted([str(x) for x in u_franja if pd.notna(x)])
+else:
+    opciones_franja = []
+
 f_franja = st.sidebar.multiselect("Franja de Precio", opciones_franja)
 
 # Definimos target_vol
@@ -175,6 +182,7 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
 
 
