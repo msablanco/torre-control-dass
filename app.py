@@ -12,15 +12,11 @@ st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 # --- 2. SIDEBAR ---
 st.sidebar.header("🎯 CONTROL DE VOLUMEN")
 vol_obj = st.sidebar.number_input("Volumen Objetivo 2026", value=1000000, step=50000)
-
-# Botón de validación
-validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False, 
-                                    help="Fija el factor de escala basándose en el Emprendimiento seleccionado.")
+validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 FILTROS")
 
-# Cargamos datos primero para obtener los emprendimientos
 @st.cache_data(ttl=600)
 def load_drive_data():
     try:
@@ -57,74 +53,62 @@ if data:
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
 
-    # Filtro Emprendimiento (Canal)
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else []
     f_emp = st.sidebar.multiselect("Seleccionar Emprendimiento (Canal)", opciones_emp)
-    
     query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
 
-    # Preparación base
+    # --- 3. PROCESAMIENTO BASE (SELL OUT) ---
     if not sell_out.empty:
         col_f = next((c for c in sell_out.columns if 'FECHA' in c or 'MES' in c), None)
         sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f], dayfirst=True, errors='coerce')
-        sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
         sell_out['MES_NUM'] = sell_out['FECHA_DT'].dt.month
+        sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
-    so_base = sell_out[sell_out['AÑO'] == 2025].copy()
-    so_base = so_base.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
+    so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
+    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
 
-    # --- LÓGICA DE ESCALA POR CANAL ---
-    # 1. Filtramos por Emprendimiento para definir la BASE del objetivo
-    df_canal = so_base.copy()
-    if f_emp:
-        df_canal = df_canal[df_canal['EMPRENDIMIENTO'].isin(f_emp)]
+    # Filtrado por Canal para el cálculo de Escala Fija
+    df_canal = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)] if f_emp else so_2025.copy()
     
-    venta_total_canal = df_canal['CANTIDAD'].sum()
-
-    # 2. Filtramos por búsqueda para la VISTA
+    # Filtrado por búsqueda para la vista actual
     df_vista = df_canal.copy()
     if query:
         df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query, na=False)]
-    
-    venta_en_vista = df_vista['CANTIDAD'].sum()
 
-    if validar_fijar:
-        # ESCALA FIJA: El objetivo se reparte sobre el TOTAL DEL CANAL seleccionado
-        factor_escala = vol_obj / venta_total_canal if venta_total_canal > 0 else 1
-    else:
-        # ESCALA DINÁMICA: El objetivo se fuerza sobre lo que hay en PANTALLA
-        factor_escala = vol_obj / venta_en_vista if venta_en_vista > 0 else 1
+    # --- 4. LÓGICA DE ESCALA ---
+    # Si fijamos escala, el denominador es el canal entero. Si no, es solo lo filtrado.
+    denominador = df_canal['CANTIDAD'].sum() if validar_fijar else df_vista['CANTIDAD'].sum()
+    factor_escala = vol_obj / denominador if denominador > 0 else 1
 
-    # --- CÁLCULOS ---
+    # --- 5. SERIES TEMPORALES ---
     meses_idx = range(1, 13)
     meses_labels = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
+    # Sell Out y Proyección
     v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
     v_proy_26 = (v_out_25 * factor_escala).round(0)
 
-    # Sell In (Filtrado por canal y búsqueda)
-    si_base = sell_in.copy()
+    # Sell In (Filtrado igual que Sell Out)
     v_in_25 = pd.Series(0, index=meses_idx)
-    if not si_base.empty and 'FECHA' in si_base.columns:
-        si_base['FECHA_DT'] = pd.to_datetime(si_base['FECHA'], dayfirst=True, errors='coerce')
-        si_25 = si_base[si_base['FECHA_DT'].dt.year == 2025].copy()
-        si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
-        si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
-        if f_emp and 'EMPRENDIMIENTO' in si_25.columns: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
-        if query: si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
-        v_in_25 = si_25.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
+    if not sell_in.empty:
+        col_f_in = next((c for c in sell_in.columns if 'FECHA' in c or 'MES' in c), None)
+        if col_f_in:
+            sell_in['FECHA_DT'] = pd.to_datetime(sell_in[col_f_in], dayfirst=True, errors='coerce')
+            si_25 = sell_in[sell_in['FECHA_DT'].dt.year == 2025].copy()
+            si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
+            si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
+            if f_emp and 'EMPRENDIMIENTO' in si_25.columns: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
+            if query: si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
+            v_in_25 = si_25.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
 
-    # --- INTERFAZ ---
+    # --- 6. INTERFAZ ---
     tab1, tab2 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)"])
 
     with tab1:
         c1, c2, c3 = st.columns(3)
         c1.metric("Proyección en Vista", f"{v_proy_26.sum():,.0f} u.")
         c2.metric("Objetivo Canal", f"{vol_obj:,.0f} u.")
-        c3.metric("Factor Escala", f"{factor_escala:.4f}")
-
-        if validar_fijar:
-            st.success(f"🔒 Escala bloqueada para el canal: {', '.join(f_emp) if f_emp else 'Todos'}")
+        c3.metric("Escala", f"{factor_escala:.4f}")
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025", line=dict(color='#3366CC')))
@@ -140,7 +124,7 @@ if data:
         st.subheader("🧪 Proyección por Disciplina")
         if not df_vista.empty:
             disc_proy = (df_vista.groupby(['DISCIPLINA', 'MES_NUM'])['CANTIDAD'].sum().unstack(fill_value=0) * factor_escala).round(0)
-            disc_proy.columns = [meses_labels[i-1] for i in disc_proy.columns]
+            disc_proy.columns = [meses_labels[i-1] for i in disc_proy.columns if i in range(1,13)]
             disc_proy['TOTAL'] = disc_proy.sum(axis=1)
             st.dataframe(disc_proy, use_container_width=True)
 
@@ -151,8 +135,8 @@ if data:
         tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
         tactical['V_PROY_26'] = (tactical['V25'] * factor_escala).round(0)
         tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12).round(0)
-        tactical['MOS'] = (tactical['STK'] / tactical['V_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
+        tactical['MOS'] = (tactical['STK'] / (tactical['V_MENSUAL'].replace(0, 1))).round(1)
         if query: tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
         st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK', 'V25', 'V_MENSUAL', 'MOS']].sort_values('V_MENSUAL', ascending=False), use_container_width=True)
 else:
-    st.info("Cargando datos...")
+    st.info("Conectando con Drive...")
