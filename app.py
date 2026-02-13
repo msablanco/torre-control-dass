@@ -10,11 +10,13 @@ from googleapiclient.http import MediaIoBaseDownload
 st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 def fmt_p(valor):
+    if pd.isna(valor) or valor == 0: return "0"
     return f"{valor:,.0f}".replace(",", ".")
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("🎯 CONTROL DE VOLUMEN")
 vol_obj = st.sidebar.number_input("Volumen Objetivo 2026", value=1000000, step=50000)
+mos_objetivo = st.sidebar.slider("MOS Objetivo (Meses)", 1, 8, 3)
 validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False)
 
 st.sidebar.markdown("---")
@@ -41,17 +43,15 @@ def load_drive_data():
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
             df.columns = [str(c).strip().upper() for c in df.columns]
             
-            # Normalización de columnas comunes
+            # Normalización (Tu lógica original)
             df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU', 'CANT': 'CANTIDAD', 'QTY': 'CANTIDAD', 'UNIDADES': 'CANTIDAD'})
             if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
-            # PARCHE ESPECÍFICO PARA SELL IN WHOLESALE (Columna G suele ser la 7ma)
+            # PARCHE ESPECÍFICO PARA SELL IN (Col B=Fecha, Col G=Cantidad)
             if "SELL_IN_VENTAS" in name.upper():
-                if 'EMPRENDIMIENTO' not in df.columns:
-                    df['EMPRENDIMIENTO'] = 'WHOLESALE'
-                # Si 'CANTIDAD' no se detectó por nombre, intentamos por posición (Columna G es índice 6)
-                if 'CANTIDAD' not in df.columns and len(df.columns) >= 7:
-                    df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
+                if 'EMPRENDIMIENTO' not in df.columns: df['EMPRENDIMIENTO'] = 'WHOLESALE'
+                if len(df.columns) >= 2: df = df.rename(columns={df.columns[1]: 'FECHA_REF'})
+                if len(df.columns) >= 7: df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
             
             dfs[name] = df
         return dfs
@@ -63,7 +63,6 @@ data = load_drive_data()
 
 if data:
     sell_out = data.get('Sell_Out', pd.DataFrame())
-    # Buscamos el archivo por el nuevo nombre informado
     sell_in = data.get('Sell_In_Ventas', data.get('Sell_In', pd.DataFrame()))
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
@@ -80,7 +79,7 @@ if data:
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
-    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
+    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']], on='SKU', how='left')
 
     df_canal = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)] if f_emp else so_2025.copy()
     df_vista = df_canal.copy()
@@ -97,27 +96,22 @@ if data:
     v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
     v_proy_26 = (v_out_25 * factor_escala).round(0)
 
-    # --- 6. SELL IN (AJUSTADO PARA WHOLESALE SOLAMENTE) ---
+    # SELL IN
     v_in_25 = pd.Series(0, index=meses_idx)
     if not sell_in.empty:
-        col_f_in = next((c for c in sell_in.columns if any(x in c for x in ['FECHA', 'MES', 'DATE'])), None)
+        col_f_in = next((c for c in sell_in.columns if any(x in c for x in ['FECHA', 'MES', 'DATE', 'REF'])), None)
         if col_f_in:
             si_temp = sell_in.copy()
             si_temp['FECHA_DT'] = pd.to_datetime(si_temp[col_f_in], dayfirst=True, errors='coerce')
             si_25 = si_temp[si_temp['FECHA_DT'].dt.year == 2025].copy()
             si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
-            si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
-            
-            # Filtro de Canal: Como Sell_In_Ventas es solo Wholesale, solo aparece si Wholesale está seleccionado o si no hay selección
-            if f_emp:
-                si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
+            if f_emp: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
             if query:
-                si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
-            
+                si_25 = si_25[si_25.merge(maestro[['SKU','DESCRIPCION']], on='SKU', how='left')['DESCRIPCION'].str.contains(query, na=False)]
             v_in_25 = si_25.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
 
-    # --- 7. INTERFAZ ---
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)"])
+    # --- 6. INTERFAZ ---
+    tab1, tab2 = st.tabs(["📊 PERFORMANCE", "🎯 ESTRATEGIA DE COMPRA"])
 
     with tab1:
         c1, c2, c3 = st.columns(3)
@@ -126,36 +120,48 @@ if data:
         c3.metric("Escala", f"{factor_escala:.4f}")
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025 (WS)", line=dict(color='#3366CC', width=3)))
+        fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025", line=dict(color='#3366CC', width=3)))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_out_25, name="Sell Out 2025", line=dict(dash='dot', color='#FF9900')))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_proy_26, name="Proyección 2026", line=dict(width=4, color='#00FF00')))
         st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("📋 Detalle Mensual")
-        df_m = pd.DataFrame({"Mes": meses_labels, "Sell In 2025": v_in_25.values, "Sell Out 2025": v_out_25.values, "Proy 2026": v_proy_26.values}).set_index("Mes")
-        df_m.loc['TOTAL'] = df_m.sum()
-        st.dataframe(df_m.T.style.format(lambda x: fmt_p(x)), use_container_width=True)
-
-        st.subheader("🧪 Proyección por Disciplina")
-        if not df_vista.empty:
-            disc_proy = (df_vista.groupby(['DISCIPLINA', 'MES_NUM'])['CANTIDAD'].sum().unstack(fill_value=0) * factor_escala).round(0)
-            disc_proy.columns = [meses_labels[i-1] for i in disc_proy.columns if i in range(1,13)]
-            disc_proy['TOTAL'] = disc_proy.sum(axis=1)
-            disc_proy = disc_proy.sort_values(by='TOTAL', ascending=False)
-            st.dataframe(disc_proy.style.format(lambda x: fmt_p(x)), use_container_width=True)
+        df_m = pd.DataFrame({"Sell In": v_in_25.values, "Sell Out": v_out_25.values, "Proy 2026": v_proy_26.values}, index=meses_labels)
+        st.dataframe(df_m.T.style.format(fmt_p), use_container_width=True)
 
     with tab2:
-        st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
+        st.subheader("🏢 Resumen por Segmento (Disciplina y Franja)")
+        
+        # Procesamiento para Matriz
         stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK'})
         vta_sku_25 = df_canal.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'V25'})
-        tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
+        
+        # Unimos todo al Maestro
+        tactical = maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
+        
         tactical['V_PROY_26'] = (tactical['V25'] * factor_escala).round(0)
-        tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12).round(0)
+        tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12)
         tactical['MOS'] = (tactical['STK'] / (tactical['V_MENSUAL'].replace(0, 1))).round(1)
-        if query: tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK', 'V25', 'V_MENSUAL', 'MOS']].sort_values('V_MENSUAL', ascending=False).style.format({
-            'STK': lambda x: fmt_p(x), 'V25': lambda x: fmt_p(x), 'V_MENSUAL': lambda x: fmt_p(x), 'MOS': "{:.1f}"
+        tactical['SUGERIDO'] = ((tactical['V_MENSUAL'] * mos_objetivo) - tactical['STK']).clip(lower=0).round(0)
+
+        # TABLA 1: RESUMEN POR DISCIPLINA Y FRANJA
+        resumen_estrategico = tactical.groupby(['DISCIPLINA', 'FRANJA_PRECIO']).agg({
+            'V25': 'sum', 'STK': 'sum', 'V_PROY_26': 'sum', 'SUGERIDO': 'sum'
+        }).reset_index()
+        resumen_estrategico['MOS_PROMEDIO'] = (resumen_estrategico['STK'] / (resumen_estrategico['V_PROY_26'] / 12).replace(0,1)).round(1)
+
+        st.dataframe(resumen_estrategico.sort_values(['DISCIPLINA', 'SUGERIDO'], ascending=[True, False]).style.format({
+            'V25': fmt_p, 'STK': fmt_p, 'V_PROY_26': fmt_p, 'SUGERIDO': fmt_p, 'MOS_PROMEDIO': '{:.1f}'
         }), use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("📝 Detalle de Salud de Inventario por SKU")
+        if query:
+            tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
+        
+        st.dataframe(tactical.sort_values('V_PROY_26', ascending=False).style.format({
+            'STK': fmt_p, 'V25': fmt_p, 'V_PROY_26': fmt_p, 'SUGERIDO': fmt_p, 'MOS': '{:.1f}'
+        }), use_container_width=True)
+
 else:
     st.info("Cargando datos...")
-
