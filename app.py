@@ -1,5 +1,5 @@
 import streamlit as st
-import pd as pd
+import pdandas as pd
 import io
 import plotly.graph_objects as go
 from google.oauth2 import service_account
@@ -155,3 +155,4 @@ if data:
         }), use_container_width=True)
 else:
     st.info("Cargando datos...")
+
