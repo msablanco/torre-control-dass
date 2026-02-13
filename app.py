@@ -115,10 +115,10 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-  # --- 5. MOTOR DE CÁLCULO UNIFICADO ---
+# --- 5. MOTOR DE CÁLCULO UNIFICADO ---
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
     
-    # Cálculos globales de venta proyectada
+    # Cálculos globales
     vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
     factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
     
@@ -130,7 +130,6 @@ if data:
     else:
         ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTUROS'])
 
-    # Tabla Maestra Tactical
     tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
     tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
     
@@ -148,7 +147,7 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-    # --- 6. RENDERIZADO DE TABS (ESTRUCTURA ÚNICA) ---
+    # --- 6. RENDERIZADO DE TABS (ESTRUCTURA FINAL UNIFICADA) ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
 
     with tab1:
@@ -165,13 +164,13 @@ if data:
         df_plot = base_meses.merge(si_25_g, on='MES_STR', how='left').merge(so_25_g, on='MES_STR', how='left').fillna(0)
         df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
 
+        # Gráfico Performance con nombre y key única
         fig_perf = go.Figure()
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
         
-        # KEY ÚNICA PARA EVITAR EL ERROR DE DUPLICADO
-        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_performance_global")
+        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_performance_principal")
 
         st.markdown("### 📋 Detalle Mensual")
         df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
@@ -189,15 +188,14 @@ if data:
         c3.metric("MOS Promedio", f"{mos_m:.1f} meses")
 
         cols_f = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
-        # Mostramos SKU como índice para que se vea limpio
         st.dataframe(tactical[cols_f].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
 
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
         sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
         
-        # KEY ÚNICA PARA EL SELECTOR
-        sku_sel = st.selectbox("Seleccionar SKU para análisis de stock", sku_list, key="selector_sku_tab3")
+        # Key única para el selectbox
+        sku_sel = st.selectbox("Seleccionar SKU para análisis detallado", sku_list, key="sb_escenarios_sku")
         
         if sku_sel:
             dat = tactical[tactical['SKU'] == sku_sel].iloc[0]
@@ -213,18 +211,17 @@ if data:
                 curr = (curr + arribo) - dat['VTA_PROY_MENSUAL']
                 stk_ev.append(max(0, curr))
             
+            # Gráfico de flujo con nombre y key única
             fig_stk = go.Figure()
             fig_stk.add_trace(go.Scatter(x=mes_eje, y=stk_ev, name="Stock", line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
             fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos", marker_color='#2ecc71', opacity=0.7))
             fig_stk.add_hline(y=dat['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Seguridad")
             
-            fig_stk.update_layout(title=f"Evolución Stock: {sku_sel}", hovermode="x unified")
+            fig_stk.update_layout(title=f"Evolución Proyectada Stock: {sku_sel}", hovermode="x unified")
             
-            # KEY ÚNICA PARA EL GRÁFICO 2
-            st.plotly_chart(fig_stk, use_container_width=True, key="grafico_agotamiento_sku_tab3")
+            st.plotly_chart(fig_stk, use_container_width=True, key="grafico_flujo_sku")
             
             if min(stk_ev) == 0:
-                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total durante el año.")
+                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total.")
             else:
                 st.success(f"✅ Abastecimiento cubierto para {sku_sel}.")
-
