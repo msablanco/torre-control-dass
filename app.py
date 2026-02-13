@@ -80,7 +80,7 @@ st.sidebar.title("🎮 PARÁMETROS")
 f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
 
     # --- 3. LÓGICA DE FILTRADO ---
-    m_filt = maestro.copy()
+m_filt = maestro.copy()
 if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
 if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
@@ -149,6 +149,7 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
 
 
