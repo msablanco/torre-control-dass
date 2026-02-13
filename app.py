@@ -115,20 +115,19 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
- # --- ESTRUCTURA DE PANTALLA FINAL (SOLO UNA VEZ EN EL ARCHIVO) ---
+# --- ESTRUCTURA DE PANTALLA FINAL (CORREGIDA) ---
 tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
 with tab1:
     st.subheader("Análisis de Demanda y Proyección")
-    # Asegúrate de que fig_perf esté definida justo antes
     if 'fig_perf' in locals():
+        # Este es el ID 001
         st.plotly_chart(fig_perf, use_container_width=True, key="chart_perf_unique_001")
     else:
         st.warning("No se pudo generar el gráfico de performance.")
 
 with tab2:
     st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-    # Verificamos que 'tactical' exista para evitar errores de referencia
     if 'tactical' in locals() and not tactical.empty:
         st.dataframe(tactical.set_index('SKU'), use_container_width=True)
     else:
@@ -138,14 +137,15 @@ with tab3:
     st.subheader("🔮 Línea de Tiempo de Oportunidad")
     if 'tactical' in locals() and not tactical.empty:
         sku_list = tactical['SKU'].unique()
+        # El selector tiene su propia KEY
         sku_sel = st.selectbox("Seleccionar SKU para simulación", sku_list, key="sb_sku_sim_unique_002")
         
         if sku_sel:
-            # --- Lógica de cálculo de stock proyectado ---
-            # (Aquí iría tu lógica de fig_stk)
+            # --- Aquí va tu lógica de cálculo para fig_stk ---
+            # (Asegúrate de que el código que crea fig_stk esté aquí arriba)
             
-            # Renderizado con ID blindado
             if 'fig_stk' in locals():
+                # Este es el ID 003, ahora bien separado de la Tab 1
                 st.plotly_chart(fig_stk, use_container_width=True, key="chart_stk_sim_unique_003")
     else:
         st.info("Selecciona parámetros en el sidebar para activar la simulación.")
