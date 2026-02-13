@@ -5,8 +5,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="FILA - Forecast Blindado", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_drive_data():
@@ -30,7 +30,8 @@ def load_drive_data():
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
             df.columns = [str(c).strip().upper() for c in df.columns]
             df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU'})
-            if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
+            if 'SKU' in df.columns: 
+                df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             dfs[name] = df
         return dfs
     except Exception as e:
@@ -51,13 +52,13 @@ if data:
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
     # --- SIDEBAR: PARÁMETROS ---
-    st.sidebar.header("🎯 CONFIGURACIÓN")
+    st.sidebar.header("🎯 CONTROL DE VOLUMEN")
     
     vol_obj = st.sidebar.number_input("Volumen Total Objetivo 2026", value=1000000, step=50000)
     
-    # CUADRO DE VALIDACIÓN: VISIBLE Y CLARO
+    # CUADRO DE VALIDACIÓN (CHECKBOX) - ESTO BLOQUEA EL RECALCULO
     validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False, 
-                                        help="Tilda este cuadro para que la proyección sea fija y no cambie al filtrar SKUs.")
+                                        help="Tilda para que la proyección no explote al filtrar SKUs.")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 FILTROS DE VISTA")
@@ -66,16 +67,16 @@ if data:
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if not sell_out.empty else []
     f_emp = st.sidebar.multiselect("Canal / Emprendimiento", opciones_emp)
 
-    # --- 2. LÓGICA DE ESCALAMIENTO (BLINDAJE) ---
+    # --- 2. LÓGICA DE ESCALAMIENTO BLINDADA ---
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy() if not sell_out.empty else pd.DataFrame()
     venta_total_empresa = so_2025['CANTIDAD'].sum() if not so_2025.empty else 0
 
     if validar_fijar:
-        # BLOQUEO: El factor se basa en el TOTAL de la empresa, no en el filtro
+        # FACTOR FIJO: Se calcula sobre el total de la empresa (Inmóvil)
         factor_escala = vol_obj / venta_total_empresa if venta_total_empresa > 0 else 1
-        st.sidebar.success(f"🔒 ESCALA BLOQUEADA: {factor_escala:.4f}")
+        st.sidebar.success(f"🔒 ESCALA FIJADA: {factor_escala:.4f}")
     else:
-        # DINÁMICO: Recalcula según lo que ves (esto es lo que hace que los números exploten)
+        # FACTOR DINÁMICO: Recalcula según lo filtrado (Lo que genera el error visual)
         df_temp = so_2025.copy()
         if f_emp:
             df_temp = df_temp[df_temp['EMPRENDIMIENTO'].isin(f_emp)]
@@ -84,21 +85,17 @@ if data:
         
         venta_actual = df_temp['CANTIDAD'].sum() if not df_temp.empty else 0
         factor_escala = vol_obj / venta_actual if venta_actual > 0 else 1
-        st.sidebar.warning("⚠️ ESCALA DINÁMICA (Recalculando)")
+        st.sidebar.warning("⚠️ ESCALA DINÁMICA")
 
-    # --- 3. PROCESAMIENTO TACTICAL ---
+    # --- 3. PROCESAMIENTO TACTICAL (Se define siempre para evitar NameError) ---
     stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
     vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_2025'})
 
-    # Definimos la tabla principal antes de las pestañas
     tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
     
-    # Cálculos Proyectados
-    tactical['VTA_PROY_2026'] = (tactical['VTA_2025'] * factor_escala).round(0)
-    tactical['VTA_MENSUAL'] = (tactical['VTA_PROY_2026'] / 12).round(0)
-    
-    # Evitamos división por cero para el MOS
-    tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
+    tactical['VTA_PROY_ANUAL'] = (tactical['VTA_2025'] * factor_escala).round(0)
+    tactical['VTA_PROY_MENSUAL'] = (tactical['VTA_PROY_ANUAL'] / 12).round(0)
+    tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
 
     # --- 4. FILTRADO DE VISTA ---
     df_vista = tactical.copy()
@@ -108,25 +105,27 @@ if data:
     if query:
         df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query)]
 
-    # --- 5. INTERFAZ ---
+    # --- 5. INTERFAZ (TABS) ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 VALIDACIÓN"])
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-        st.dataframe(df_vista[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_MENSUAL', 'MOS']]
-                     .sort_values('VTA_MENSUAL', ascending=False), use_container_width=True)
+        st.dataframe(df_vista[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_PROY_MENSUAL', 'MOS']]
+                     .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
 
     with tab3:
+        # Aseguramos que todas las variables usadas aquí existan
         st.subheader("🔮 Resumen de Proyección")
-        # Aquí sumamos la proyección de lo que está en pantalla
-        suma_proy = df_vista['VTA_PROY_2026'].sum()
-        st.metric("Total Proyectado en esta vista", f"{suma_proy:,.0f} u.")
-        st.write(f"Esta selección representa el **{(suma_proy/vol_obj):.1%}** del objetivo global de {vol_obj:,.0f}.")
+        total_p = df_vista['VTA_PROY_ANUAL'].sum()
+        st.metric("Total Proyectado en Vista", f"{total_p:,.0f} u.")
+        
+        proporcion = (total_p / vol_obj) if vol_obj > 0 else 0
+        st.write(f"Esta selección representa el **{proporcion:.1%}** del objetivo global.")
         
         if validar_fijar:
-            st.success("Los valores están blindados contra el total de la empresa.")
+            st.success("Los valores están blindados: el factor no cambiará aunque filtres.")
         else:
-            st.warning("Los valores están forzados a sumar el objetivo solo con los SKUs visibles.")
+            st.warning("Cuidado: el factor es dinámico. Tilda el cuadro en el sidebar para fijarlo.")
 
 else:
-    st.error("No se detectaron datos. Verifica st.secrets.")
+    st.error("No se detectaron datos en las rutas de Drive.")
