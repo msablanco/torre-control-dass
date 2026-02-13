@@ -1,7 +1,8 @@
+streamlit==1.31.1
+altair==4.2.2
 pandas
-streamlit
 plotly
-openpyxl
 google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
+openpyxl
