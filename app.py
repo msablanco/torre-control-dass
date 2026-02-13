@@ -115,34 +115,37 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-  # --- 5. RENDERIZADO DE TABS (UNIFICADO Y SIN DUPLICADOS) ---
-tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
+ # --- ESTRUCTURA DE PANTALLA FINAL (SOLO UNA VEZ EN EL ARCHIVO) ---
+tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
 with tab1:
     st.subheader("Análisis de Demanda y Proyección")
-    # ... (tus cálculos de si_25_g, so_25_g, etc.) ...
-    
-    fig_perf = go.Figure()
-    # ... (tus add_trace para fig_perf) ...
-    
-    # AGREGAMOS UNA KEY ÚNICA
-    st.plotly_chart(fig_perf, use_container_width=True, key="grafico_performance_tab1")
+    # Asegúrate de que fig_perf esté definida justo antes
+    if 'fig_perf' in locals():
+        st.plotly_chart(fig_perf, use_container_width=True, key="chart_perf_unique_001")
+    else:
+        st.warning("No se pudo generar el gráfico de performance.")
 
 with tab2:
     st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-    # Muestra la tabla táctica
-    st.dataframe(tactical.set_index('SKU'), use_container_width=True)
+    # Verificamos que 'tactical' exista para evitar errores de referencia
+    if 'tactical' in locals() and not tactical.empty:
+        st.dataframe(tactical.set_index('SKU'), use_container_width=True)
+    else:
+        st.info("Filtra los datos para ver la matriz de salud.")
 
 with tab3:
     st.subheader("🔮 Línea de Tiempo de Oportunidad")
-    # Selector con Key única
-    sku_list = tactical['SKU'].unique()
-    sku_sel = st.selectbox("Seleccionar SKU", sku_list, key="selector_sku_tab3")
-    
-    if sku_sel:
-        # ... (tus cálculos de stock evolutivo) ...
-        fig_stk = go.Figure()
-        # ... (tus add_trace para fig_stk) ...
+    if 'tactical' in locals() and not tactical.empty:
+        sku_list = tactical['SKU'].unique()
+        sku_sel = st.selectbox("Seleccionar SKU para simulación", sku_list, key="sb_sku_sim_unique_002")
         
-        # OTRA KEY ÚNICA PARA DIFERENCIARLO
-        st.plotly_chart(fig_stk, use_container_width=True, key="grafico_evolucion_tab3")
+        if sku_sel:
+            # --- Lógica de cálculo de stock proyectado ---
+            # (Aquí iría tu lógica de fig_stk)
+            
+            # Renderizado con ID blindado
+            if 'fig_stk' in locals():
+                st.plotly_chart(fig_stk, use_container_width=True, key="chart_stk_sim_unique_003")
+    else:
+        st.info("Selecciona parámetros en el sidebar para activar la simulación.")
