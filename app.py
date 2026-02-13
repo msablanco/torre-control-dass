@@ -125,71 +125,74 @@ if f_emp:
     so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
 if f_cli:
     so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
-  # --- 4. MOTOR DE CÁLCULO DE GRÁFICOS (LO QUE RECUPERA LA VISIBILIDAD) ---
+ # --- 4. MOTOR DE CÁLCULO DE GRÁFICOS (REFORZADO) ---
 
-# 1. Agrupamos los datos filtrados por mes
-si_graf = si_filt.groupby('MES_STR')['PARES'].sum().reset_index()
-so_graf = so_filt.groupby('MES_STR')['PARES'].sum().reset_index()
+# Función interna para buscar la columna de cantidad
+def get_col_pares(df):
+    for c in ['PARES', 'CANTIDAD', 'QTY', 'UNIDADES']:
+        if c in df.columns: return c
+    return None
 
-# 2. Creamos el gráfico de Performance
-import plotly.graph_objects as go
+c_si = get_col_pares(si_filt)
+c_so = get_col_pares(so_filt)
 
+# Agrupación segura
+if c_si and not si_filt.empty:
+    si_graf = si_filt.groupby('MES_STR')[c_si].sum().reset_index()
+    si_graf.columns = ['MES_STR', 'PARES']
+else:
+    si_graf = pd.DataFrame(columns=['MES_STR', 'PARES'])
+
+if c_so and not so_filt.empty:
+    so_graf = so_filt.groupby('MES_STR')[c_so].sum().reset_index()
+    so_graf.columns = ['MES_STR', 'PARES']
+else:
+    so_graf = pd.DataFrame(columns=['MES_STR', 'PARES'])
+
+# Crear fig_perf
 fig_perf = go.Figure()
+fig_perf.add_trace(go.Scatter(x=si_graf['MES_STR'], y=si_graf['PARES'], name='Sell In', mode='lines+markers'))
+fig_perf.add_trace(go.Scatter(x=so_graf['MES_STR'], y=so_graf['PARES'], name='Sell Out', mode='lines+markers'))
+fig_perf.update_layout(title="Evolución Mensual", hovermode="x unified")
 
-# Línea de Sell In
-fig_perf.add_trace(go.Scatter(
-    x=si_graf['MES_STR'], y=si_graf['PARES'],
-    name='Sell In (Ingreso)', mode='lines+markers',
-    line=dict(color='#1f77b4', width=3)
-))
+# --- 5. TABLA TÁCTICA Y LÓGICA DE STOCK (TAB 2 y 3) ---
+# Unimos Stock actual a la tabla táctica
+if not stock.empty:
+    c_stk = get_col_pares(stock)
+    stk_res = stock.groupby('SKU')[c_stk].sum().reset_index()
+    tactical = m_filt.merge(stk_res, on='SKU', how='left').fillna(0)
+    tactical = tactical.rename(columns={c_stk: 'STOCK_ACTUAL'})
+else:
+    tactical = m_filt.copy()
+    tactical['STOCK_ACTUAL'] = 0
 
-# Línea de Sell Out
-fig_perf.add_trace(go.Scatter(
-    x=so_graf['MES_STR'], y=so_graf['PARES'],
-    name='Sell Out (Salida)', mode='lines+markers',
-    line=dict(color='#ff7f0e', width=3)
-))
-
-fig_perf.update_layout(
-    title="Evolución Mensual de Ventas",
-    hovermode="x unified",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-)
-
-# --- 5. TABLA TÁCTICA (Para la Tab 2) ---
-# Aquí calculamos lo que necesita la pestaña TACTICAL
-tactical = m_filt.copy()
-# (Asegúrate de que aquí vayan tus cálculos de Stock, MOS, etc.)
-
-# --- BLOQUE FINAL DE RENDERIZADO (LÍNEA 200 EN ADELANTE) ---
-
+# --- RENDERIZADO FINAL ---
 tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
 with tab1:
     st.subheader("Análisis de Demanda y Proyección")
-    if 'fig_perf' in locals():
-        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_tab_1_perf")
-    else:
-        st.warning("Gráfico de performance no disponible.")
+    st.plotly_chart(fig_perf, use_container_width=True, key="graf_perf_001")
 
 with tab2:
-    st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-    if 'tactical' in locals() and not tactical.empty:
-        st.dataframe(tactical.set_index('SKU'), use_container_width=True)
+    st.subheader("⚡ Matriz de Salud de Inventario")
+    st.dataframe(tactical.set_index('SKU'), use_container_width=True)
 
 with tab3:
     st.subheader("🔮 Línea de Tiempo de Oportunidad")
-    if 'tactical' in locals() and not tactical.empty:
-        sku_list = tactical['SKU'].unique()
-        sku_sel = st.selectbox("Seleccionar SKU", sku_list, key="selector_sku_tab_3")
-        
-        if sku_sel:
-            # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
-            if 'fig_stk' in locals():
-                st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
-
-
-
+    sku_list = tactical['SKU'].unique()
+    sku_sel = st.selectbox("Seleccionar SKU", sku_list, key="sel_sku_tab3")
+    
+    if sku_sel:
+        # Lógica rápida de simulación de stock
+        stk_ini = tactical[tactical['SKU'] == sku_sel]['STOCK_ACTUAL'].values[0]
+        # Creamos una gráfica simple de ejemplo para que no de error
+        fig_stk = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = stk_ini,
+            title = {'text': f"Stock Actual: {sku_sel}"},
+            gauge = {'axis': {'range': [0, stk_ini*2]}, 'bar': {'color': "darkblue"}}
+        ))
+        st.plotly_chart(fig_stk, use_container_width=True, key="graf_stk_003")
 
 
 
