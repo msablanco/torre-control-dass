@@ -70,118 +70,85 @@ if data:
     f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
     f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if 'FRANJA_PRECIO' in maestro.columns else [])
 
-    # --- 1. FILTRADO POR CANAL (BASE PARA EL CÁLCULO) ---
-    # Esto define el "universo" sobre el cual se prorratea el objetivo
-    so_base = sell_out.copy()
-    if f_emp: so_base = so_base[so_base['EMPRENDIMIENTO'].isin(f_emp)]
-    if f_cli: so_base = so_base[so_base['CLIENTE_NAME'].isin(f_cli)]
+    # --- 1. PASO CRÍTICO: CALCULAR EL FACTOR ESTÁTICO DEL CANAL ---
+    so_ref = sell_out[sell_out['AÑO'] == 2025].copy()
+    if f_emp: so_ref = so_ref[so_ref['EMPRENDIMIENTO'].isin(f_emp)]
+    if f_cli: so_ref = so_ref[so_ref['CLIENTE_NAME'].isin(f_cli)]
     
-    vta_tot_so_canal = so_base[so_base['AÑO'] == 2025]['CANTIDAD'].sum()
-    
-    # FACTOR FIJO: Se calcula una sola vez para todo el canal
-    factor_fijo = target_vol / vta_tot_so_canal if vta_tot_so_canal > 0 else 1
+    vta_tot_canal_2025 = so_ref['CANTIDAD'].sum()
+    # Este factor es fijo y no cambia al buscar un SKU
+    FACTOR_ESTATICO = target_vol / vta_tot_canal_2025 if vta_tot_canal_2025 > 0 else 1
 
-    # --- 2. FILTRADO ESPECÍFICO (BÚSQUEDA Y SKU) ---
+    # --- 2. FILTRADO PARA VISUALIZACIÓN ---
     m_filt = maestro.copy()
     if search_query: 
         m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
     if f_franja: 
         m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
-    def aplicar_filtros_finales(df):
+    # Aplicamos filtros de canal a las otras tablas
+    def filter_by_canal(df):
         if df.empty: return df
         temp = df[df['SKU'].isin(m_filt['SKU'])]
         if f_emp and 'EMPRENDIMIENTO' in temp.columns: temp = temp[temp['EMPRENDIMIENTO'].isin(f_emp)]
         if f_cli and 'CLIENTE_NAME' in temp.columns: temp = temp[temp['CLIENTE_NAME'].isin(f_cli)]
         return temp
 
-    si_filt = aplicar_filtros_finales(sell_in)
-    so_filt = aplicar_filtros_finales(sell_out)
-    stk_filt = aplicar_filtros_finales(stock)
-    ing_filt = aplicar_filtros_finales(ingresos)
+    si_f = filter_by_canal(sell_in)
+    so_f = filter_by_canal(sell_out)
+    st_f = filter_by_canal(stock)
+    in_f = filter_by_canal(ingresos)
 
     # --- TABS ---
-    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
+    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
 
-    # SOLAPA 1: INTACTA
     with tab1:
         st.subheader("Análisis de Demanda y Proyección Unificada")
-        si_25 = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
-        so_25 = so_filt[so_filt['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index()
-        
-        # Aquí también usamos el factor_fijo para que el gráfico sea coherente
-        so_25['PROY_2026'] = (so_25['CANTIDAD'] * factor_fijo).round(0)
+        si_25 = si_f[si_f['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
+        so_25 = so_f[so_f['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index()
+        # La proyección usa el factor estático
+        so_25['PROY_2026'] = (so_25['CANTIDAD'] * FACTOR_ESTATICO).round(0)
         
         df_plot = pd.DataFrame({'MES_STR': [str(i).zfill(2) for i in range(1, 13)]}).merge(si_25, on='MES_STR', how='left').merge(so_25, on='MES_STR', how='left').fillna(0)
         df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025"))
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(dash='dot')))
-        fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(width=4)))
+        fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(width=4, color='#2ecc71')))
         st.plotly_chart(fig, use_container_width=True)
-
- # --- 1. REFERENCIA ESTÁTICA (EL CANAL) ---
-    # Filtramos Sell Out 2025 SOLO por Emprendimiento/Cliente para fijar el prorrateo
-    so_referencia = sell_out[sell_out['AÑO'] == 2025].copy()
-    if f_emp:
-        so_referencia = so_referencia[so_referencia['EMPRENDIMIENTO'].isin(f_emp)]
-    if f_cli:
-        so_referencia = so_referencia[so_referencia['CLIENTE_NAME'].isin(f_cli)]
-    
-    # Este es el total "estático" del canal seleccionado
-    vta_tot_referencia = so_referencia['CANTIDAD'].sum()
-    
-    # FACTOR FIJO: No cambia aunque busques un SKU después
-    factor_estatico = target_vol / vta_tot_referencia if vta_tot_referencia > 0 else 1
-
-    # --- 2. FILTRADO DE VISUALIZACIÓN (BÚSQUEDA / SKU) ---
-    m_filt = maestro.copy()
-    if search_query: 
-        m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
-    if f_franja: 
-        m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
-
-    # Filtros finales para mostrar en tablas
-    so_display = so_referencia[so_referencia['SKU'].isin(m_filt['SKU'])]
-    stk_display = stock[stock['SKU'].isin(m_filt['SKU'])]
-    ing_display = ingresos[ingresos['SKU'].isin(m_filt['SKU'])]
-
-    # --- TABS ---
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)"])
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # Agrupamos datos filtrados para visualización
-        vta_sku = so_display.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
-        stk_sku = stk_display.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
+        # Agrupaciones por SKU para normalizar y evitar duplicados
+        v_sku = so_f[so_f['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'SO_25'})
+        s_sku = st_f.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
+        i_sku = in_f.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
+        si_sku = si_f[si_f['AÑO'] == 2025].groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'SI_25'})
+
+        # Construcción de la tabla táctica con maestro deduplicado
+        tactical = m_filt.drop_duplicates(subset=['SKU']).merge(s_sku, on='SKU', how='left') \
+                         .merge(v_sku, on='SKU', how='left') \
+                         .merge(i_sku, on='SKU', how='left') \
+                         .merge(si_sku, on='SKU', how='left').fillna(0)
         
-        # Unimos con el maestro deduplicado para evitar repeticiones
-        tactical = m_filt.drop_duplicates('SKU').merge(stk_sku, on='SKU', how='left') \
-                         .merge(vta_sku, on='SKU', how='left').fillna(0)
+        # Filtro: Eliminar filas donde todo sea cero (tu pedido)
+        tactical = tactical[(tactical['STOCK'] > 0) | (tactical['SO_25'] > 0) | (tactical['SI_25'] > 0) | (tactical['INGRESOS_FUTUROS'] > 0)]
         
-        # CÁLCULOS CON EL FACTOR ESTÁTICO
-        # Ahora la venta proyectada de un SKU no depende de si está solo o con otros en la tabla
-        tactical['VTA_PROY_ANUAL'] = (tactical['VTA_25'] * factor_estatico).round(0)
-        tactical['VTA_PROY_MENSUAL'] = (tactical['VTA_PROY_ANUAL'] / 12).round(0)
+        # Cálculos usando el factor estático
+        tactical['VTA_PROY_MENSUAL'] = ((tactical['SO_25'] * FACTOR_ESTATICO) / 12).round(0)
+        tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 99).fillna(0).round(1)
         
-        # Evitar el error de -inf meses visto en tus capturas
-        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 99).round(1)
-        tactical['MOS'] = tactical['MOS'].fillna(0)
-        
-        # Clasificación
         tactical['ESTADO'] = tactical.apply(lambda r: "🔥 QUIEBRE" if r['MOS'] < 2.5 else ("⚠️ SOBRE-STOCK" if r['MOS'] > 8 else "✅ SALUDABLE"), axis=1)
 
-        # Mostrar tabla
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK_ACTUAL', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STOCK', 'SO_25', 'SI_25', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
                      .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
-    # SOLAPA 3: ESCENARIOS
+
     with tab3:
-        st.subheader("🔮 Línea de Tiempo de Oportunidad")
-        sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
+        st.subheader("🔮 Escenarios de Disponibilidad")
+        sku_list = tactical['SKU'].unique()
         if len(sku_list) > 0:
             sku_sel = st.selectbox("Seleccionar SKU", sku_list)
             m_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
-            st.info(f"Análisis para: {m_sku['DESCRIPCION']} | Venta mensual proyectada: {m_sku['VTA_PROY_MENSUAL']:,.0f} unidades")
-
+            st.write(f"SKU: {m_sku['SKU']} - {m_sku['DESCRIPCION']}")
