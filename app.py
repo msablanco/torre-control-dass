@@ -11,13 +11,16 @@ st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 # --- 2. SIDEBAR ---
 st.sidebar.header("🎯 CONTROL DE VOLUMEN")
-vol_obj = st.sidebar.number_input("Volumen Total Objetivo 2026", value=1000000, step=50000)
-validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False)
+vol_obj = st.sidebar.number_input("Volumen Objetivo 2026", value=1000000, step=50000)
+
+# Botón de validación
+validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False, 
+                                    help="Fija el factor de escala basándose en el Emprendimiento seleccionado.")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔍 FILTROS DE VISTA")
-query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
+st.sidebar.subheader("🔍 FILTROS")
 
+# Cargamos datos primero para obtener los emprendimientos
 @st.cache_data(ttl=600)
 def load_drive_data():
     try:
@@ -54,91 +57,102 @@ if data:
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
 
-    # Filtro de Emprendimiento solicitado
+    # Filtro Emprendimiento (Canal)
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else []
-    f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
+    f_emp = st.sidebar.multiselect("Seleccionar Emprendimiento (Canal)", opciones_emp)
+    
+    query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
 
+    # Preparación base
     if not sell_out.empty:
         col_f = next((c for c in sell_out.columns if 'FECHA' in c or 'MES' in c), None)
         sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f], dayfirst=True, errors='coerce')
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
         sell_out['MES_NUM'] = sell_out['FECHA_DT'].dt.month
 
-    # --- 3. LÓGICA DE ESCALA Y COINCIDENCIA CON OBJETIVO ---
-    so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
-    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
+    so_base = sell_out[sell_out['AÑO'] == 2025].copy()
+    so_base = so_base.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA']], on='SKU', how='left')
+
+    # --- LÓGICA DE ESCALA POR CANAL ---
+    # 1. Filtramos por Emprendimiento para definir la BASE del objetivo
+    df_canal = so_base.copy()
+    if f_emp:
+        df_canal = df_canal[df_canal['EMPRENDIMIENTO'].isin(f_emp)]
     
-    # Aplicar filtros antes de calcular escala si no está fijada
-    df_filtrado = so_2025.copy()
-    if f_emp: df_filtrado = df_filtrado[df_filtrado['EMPRENDIMIENTO'].isin(f_emp)]
-    if query: df_filtrado = df_filtrado[df_filtrado['SKU'].str.contains(query) | df_filtrado['DESCRIPCION'].str.contains(query, na=False)]
+    venta_total_canal = df_canal['CANTIDAD'].sum()
+
+    # 2. Filtramos por búsqueda para la VISTA
+    df_vista = df_canal.copy()
+    if query:
+        df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query, na=False)]
+    
+    venta_en_vista = df_vista['CANTIDAD'].sum()
 
     if validar_fijar:
-        factor_escala = vol_obj / so_2025['CANTIDAD'].sum() if not so_2025.empty else 1
+        # ESCALA FIJA: El objetivo se reparte sobre el TOTAL DEL CANAL seleccionado
+        factor_escala = vol_obj / venta_total_canal if venta_total_canal > 0 else 1
     else:
-        factor_escala = vol_obj / df_filtrado['CANTIDAD'].sum() if not df_filtrado.empty else 1
+        # ESCALA DINÁMICA: El objetivo se fuerza sobre lo que hay en PANTALLA
+        factor_escala = vol_obj / venta_en_vista if venta_en_vista > 0 else 1
 
-    # --- 4. DATA PARA PERFORMANCE ---
+    # --- CÁLCULOS ---
     meses_idx = range(1, 13)
     meses_labels = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     
-    v_out_25 = df_filtrado.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
-    
-    # Procesar Sell In 2025 para el gráfico
-    si_2025 = sell_in.copy()
-    if 'FECHA' in si_2025.columns:
-        si_2025['FECHA_DT'] = pd.to_datetime(si_2025['FECHA'], dayfirst=True, errors='coerce')
-        si_2025 = si_2025[si_2025['FECHA_DT'].dt.year == 2025]
-        si_2025['MES_NUM'] = si_2025['FECHA_DT'].dt.month
-        si_2025 = si_2025.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
-        if f_emp and 'EMPRENDIMIENTO' in si_2025.columns: si_2025 = si_2025[si_2025['EMPRENDIMIENTO'].isin(f_emp)]
-        if query: si_2025 = si_2025[si_2025['SKU'].str.contains(query) | si_2025['DESCRIPCION'].str.contains(query, na=False)]
-        v_in_25 = si_2025.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
-    else:
-        v_in_25 = pd.Series(0, index=meses_idx)
-
+    v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
     v_proy_26 = (v_out_25 * factor_escala).round(0)
 
-    # --- 5. INTERFAZ ---
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)"])
+    # Sell In (Filtrado por canal y búsqueda)
+    si_base = sell_in.copy()
+    v_in_25 = pd.Series(0, index=meses_idx)
+    if not si_base.empty and 'FECHA' in si_base.columns:
+        si_base['FECHA_DT'] = pd.to_datetime(si_base['FECHA'], dayfirst=True, errors='coerce')
+        si_25 = si_base[si_base['FECHA_DT'].dt.year == 2025].copy()
+        si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
+        si_25 = si_25.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
+        if f_emp and 'EMPRENDIMIENTO' in si_25.columns: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
+        if query: si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
+        v_in_25 = si_25.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
+
+    # --- INTERFAZ ---
+    tab1, tab2 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)"])
 
     with tab1:
-        st.subheader("📈 Curva de Proyección 2026")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Proyección en Vista", f"{v_proy_26.sum():,.0f} u.")
+        c2.metric("Objetivo Canal", f"{vol_obj:,.0f} u.")
+        c3.metric("Factor Escala", f"{factor_escala:.4f}")
+
+        if validar_fijar:
+            st.success(f"🔒 Escala bloqueada para el canal: {', '.join(f_emp) if f_emp else 'Todos'}")
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025", line=dict(color='#3366CC')))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_out_25, name="Sell Out 2025", line=dict(dash='dot', color='#FF9900')))
         fig.add_trace(go.Scatter(x=meses_labels, y=v_proy_26, name="Proyección 2026", line=dict(width=4, color='#00FF00')))
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("📋 Detalle de Valores Mensuales")
-        df_mensual = pd.DataFrame({
-            "Mes": meses_labels,
-            "Sell In 2025": v_in_25.values,
-            "Sell Out 2025": v_out_25.values,
-            "Proyección 2026": v_proy_26.values
-        }).set_index("Mes")
-        # Fila de totales para validar coincidencia con objetivo
-        totales = df_mensual.sum()
-        df_mensual.loc['TOTAL'] = totales
-        st.dataframe(df_mensual.T, use_container_width=True)
+        st.subheader("📋 Detalle Mensual")
+        df_m = pd.DataFrame({"Mes": meses_labels, "Sell In 2025": v_in_25.values, "Sell Out 2025": v_out_25.values, "Proy 2026": v_proy_26.values}).set_index("Mes")
+        df_m.loc['TOTAL'] = df_m.sum()
+        st.dataframe(df_m.T, use_container_width=True)
 
-        st.subheader("🧪 Proyección 2026 por Disciplina")
-        disc_data = df_filtrado.groupby(['DISCIPLINA', 'MES_NUM'])['CANTIDAD'].sum().unstack(fill_value=0)
-        disc_proy = (disc_data * factor_escala).round(0)
-        disc_proy.columns = meses_labels
-        disc_proy['TOTAL'] = disc_proy.sum(axis=1)
-        st.dataframe(disc_proy, use_container_width=True)
+        st.subheader("🧪 Proyección por Disciplina")
+        if not df_vista.empty:
+            disc_proy = (df_vista.groupby(['DISCIPLINA', 'MES_NUM'])['CANTIDAD'].sum().unstack(fill_value=0) * factor_escala).round(0)
+            disc_proy.columns = [meses_labels[i-1] for i in disc_proy.columns]
+            disc_proy['TOTAL'] = disc_proy.sum(axis=1)
+            st.dataframe(disc_proy, use_container_width=True)
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
-        vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
+        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK'})
+        vta_sku_25 = df_canal.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'V25'})
         tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
-        tactical['VTA_PROY_26'] = (tactical['VTA_25'] * factor_escala).round(0)
-        tactical['VTA_MENSUAL'] = (tactical['VTA_PROY_26'] / 12).round(0)
-        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
-        if query:
-            tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK_ACTUAL', 'VTA_25', 'VTA_MENSUAL', 'MOS']].sort_values('VTA_MENSUAL', ascending=False), use_container_width=True)
+        tactical['V_PROY_26'] = (tactical['V25'] * factor_escala).round(0)
+        tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12).round(0)
+        tactical['MOS'] = (tactical['STK'] / tactical['V_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
+        if query: tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK', 'V25', 'V_MENSUAL', 'MOS']].sort_values('V_MENSUAL', ascending=False), use_container_width=True)
 else:
     st.info("Cargando datos...")
