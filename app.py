@@ -115,11 +115,13 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-    # --- 5. RENDERIZADO DE TABS (UNA SOLA DEFINICIÓN) ---
+   # --- 5. ESTRUCTURA DE TABS UNIFICADA ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
 
     with tab1:
         st.subheader("Análisis de Demanda y Proyección Unificada")
+        
+        # Agrupaciones para el gráfico
         si_25_g = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
         so_25_g = so_filt[so_filt['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index()
         
@@ -132,13 +134,14 @@ if data:
         df_plot = base_meses.merge(si_25_g, on='MES_STR', how='left').merge(so_25_g, on='MES_STR', how='left').fillna(0)
         df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
 
-        fig_perf = go.Figure()
-        fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
-        fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
-        fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
+        # Crear figura con nombre único
+        fig_performance = go.Figure()
+        fig_performance.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
+        fig_performance.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
+        fig_performance.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
         
-        # KEY ÚNICA PARA TAB 1
-        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_tab1_principal")
+        # RENDERIZAR CON KEY ÚNICA
+        st.plotly_chart(fig_performance, use_container_width=True, key="plot_performance_global")
 
         st.markdown("### 📋 Detalle Mensual")
         df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
@@ -150,48 +153,52 @@ if data:
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         c1, c2, c3 = st.columns(3)
+        
+        # Métricas calculadas en el motor global
         c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['ESTADO'] == "🔥 QUIEBRE"]))
         c2.metric("SKUs con Sobre-Stock", len(tactical[tactical['ESTADO'] == "⚠️ SOBRE-STOCK"]))
-        mos_prom = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
-        c3.metric("MOS Promedio", f"{mos_prom:.1f} meses")
+        
+        vendedores = tactical[tactical['VTA_PROY_MENSUAL'] > 0]
+        mos_promedio = vendedores['MOS'].mean() if not vendedores.empty else 0
+        c3.metric("MOS Promedio", f"{mos_promedio:.1f} meses")
 
-        cols_f = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
-        # Usamos SKU como índice para eliminar la columna de números de fila
-        st.dataframe(tactical[cols_f].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
+        # Tabla de salud sin índice numérico
+        cols_viz = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
+        st.dataframe(tactical[cols_viz].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
 
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
-        sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
-        # KEY ÚNICA PARA SELECTOR
-        sku_sel = st.selectbox("Seleccionar SKU para análisis", sku_list, key="selector_sku_escenarios")
         
-        if sku_sel:
-            dat = tactical[tactical['SKU'] == sku_sel].iloc[0]
-            ing_m = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_STR')['UNIDADES'].sum()
+        # Lista de SKUs para el buscador
+        sku_opciones = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
+        sku_seleccionado = st.selectbox("Analizar flujo de stock para:", sku_opciones, key="selector_sku_analisis")
+        
+        if sku_seleccionado:
+            datos_sku = tactical[tactical['SKU'] == sku_seleccionado].iloc[0]
+            ingresos_sku = ingresos[ingresos['SKU'] == sku_seleccionado].groupby('MES_STR')['UNIDADES'].sum()
             
-            mes_eje = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
-            stk_ev = []
-            curr = dat['STK_ACTUAL']
+            meses_eje = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
+            evolucion_stk = []
+            stock_itinerante = datos_sku['STK_ACTUAL']
             
             for i in range(1, 13):
                 m_code = str(i).zfill(2)
-                arribo = ing_m.get(m_code, 0)
-                curr = (curr + arribo) - dat['VTA_PROY_MENSUAL']
-                stk_ev.append(max(0, curr))
+                arribo = ingresos_sku.get(m_code, 0)
+                stock_itinerante = (stock_itinerante + arribo) - datos_sku['VTA_PROY_MENSUAL']
+                evolucion_stk.append(max(0, stock_itinerante))
             
-            fig_stk = go.Figure()
-            fig_stk.add_trace(go.Scatter(x=mes_eje, y=stk_ev, name="Stock", line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
-            fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos", marker_color='#2ecc71', opacity=0.7))
-            fig_stk.add_hline(y=dat['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Seguridad")
+            # Crear figura con nombre y clave únicos
+            fig_flujo = go.Figure()
+            fig_flujo.add_trace(go.Scatter(x=meses_eje, y=evolucion_stk, name="Stock Proyectado", line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
+            fig_flujo.add_trace(go.Bar(x=meses_eje, y=[ingresos_sku.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Arribos Programados", marker_color='#2ecc71', opacity=0.6))
+            fig_flujo.add_hline(y=datos_sku['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Stock Seguridad")
             
-            fig_stk.update_layout(title=f"Flujo Proyectado: {sku_sel}", hovermode="x unified")
+            fig_flujo.update_layout(hovermode="x unified", title=f"Disponibilidad Proyectada: {sku_seleccionado}")
             
-            # KEY ÚNICA PARA TAB 3
-            st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab3_sku")
+            # RENDERIZAR CON KEY ÚNICA
+            st.plotly_chart(fig_flujo, use_container_width=True, key="plot_flujo_sku_especifico")
             
-            if min(stk_ev) == 0:
-                st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total.")
+            if min(evolucion_stk) == 0:
+                st.error(f"🚨 Riesgo crítico: El producto {sku_seleccionado} se agota durante el año.")
             else:
-                st.success(f"✅ Abastecimiento cubierto para {sku_sel}.")
-else:
-    st.warning("Cargando archivos desde Google Drive...")
+                st.success(f"✅ Abastecimiento saludable para {sku_seleccionado} bajo este escenario.")
