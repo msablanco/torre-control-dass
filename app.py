@@ -7,14 +7,15 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # --- 1. CONFIGURACIÓN ---
-st.set_page_config(page_title="FILA - Forecast Control", layout="wide")
+st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
-# --- 2. SIDEBAR (CONTROL DE VOLUMEN) ---
+# --- 2. SIDEBAR (CONTROLES) ---
 st.sidebar.header("🎯 CONTROL DE VOLUMEN")
 vol_obj = st.sidebar.number_input("Volumen Total Objetivo 2026", value=1000000, step=50000)
 
-# El botón que ya logramos visualizar
-validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False)
+# El botón clave para el blindaje
+validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False, 
+                                    help="Si lo tildas, la proyección no cambia al filtrar SKUs.")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 FILTROS DE VISTA")
@@ -28,8 +29,7 @@ def load_drive_data():
         creds = service_account.Credentials.from_service_account_info(info)
         service = build('drive', 'v3', credentials=creds)
         folder_id = st.secrets["google_drive_folder_id"]
-        query_drive = f"'{folder_id}' in parents and mimeType='text/csv'"
-        results = service.files().list(q=query_drive, fields="files(id, name)").execute()
+        results = service.files().list(q=f"'{folder_id}' in parents and mimeType='text/csv'", fields="files(id, name)").execute()
         files = results.get('files', [])
         dfs = {}
         for f in files:
@@ -64,33 +64,34 @@ if data:
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
         sell_out['MES_NUM'] = sell_out['FECHA_DT'].dt.month
 
-    # --- 4. LÓGICA DE BLINDAJE ---
+    # --- 4. LÓGICA DE ESCALAMIENTO ---
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
-    total_empresa_2025 = so_2025['CANTIDAD'].sum()
+    # Unimos con maestro para tener descripción y evitar KeyErrors
+    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION']], on='SKU', how='left')
+    
+    total_historico_empresa = so_2025['CANTIDAD'].sum()
 
     if validar_fijar:
-        factor_escala = vol_obj / total_empresa_2025 if total_empresa_2025 > 0 else 1
-        st.sidebar.success("🔒 Escala Fija Activa")
+        # FACTOR BLINDADO: Se calcula sobre el total de la empresa
+        factor_escala = vol_obj / total_historico_empresa if total_historico_empresa > 0 else 1
+        st.sidebar.success(f"🔒 ESCALA FIJA: {factor_escala:.4f}")
     else:
+        # FACTOR DINÁMICO: Recalcula según búsqueda
         df_ref = so_2025.copy()
-        if query: df_ref = df_ref[df_ref['SKU'].str.contains(query)]
+        if query:
+            df_ref = df_ref[df_ref['SKU'].str.contains(query) | df_ref['DESCRIPCION'].str.contains(query, na=False)]
         v_ref = df_ref['CANTIDAD'].sum()
         factor_escala = vol_obj / v_ref if v_ref > 0 else 1
-        st.sidebar.warning("⚠️ Escala Dinámica")
+        st.sidebar.warning("⚠️ ESCALA DINÁMICA")
 
-    # --- 5. CÁLCULO DE PROYECCIÓN MENSUAL ---
-    meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
-    
-    # Agrupamos ventas 2025 por mes
-    ventas_mes = so_2025.groupby('MES_NUM')['CANTIDAD'].sum().reindex(range(1, 13), fill_value=0)
-    
-    # Si hay búsqueda, filtramos la serie temporal
+    # --- 5. DATA PARA PESTAÑA 1 (PERFORMANCE) ---
+    meses_etiquetas = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+    so_grafico = so_2025.copy()
     if query:
-        so_filtrado = so_2025[so_2025['SKU'].str.contains(query) | so_2025['DESCRIPCION'].str.contains(query)]
-        ventas_mes = so_filtrado.groupby('MES_NUM')['CANTIDAD'].sum().reindex(range(1, 13), fill_value=0)
-
-    # Calculamos la línea de proyección 2026
-    proy_2026 = (ventas_mes * factor_escala).round(0)
+        so_grafico = so_grafico[so_grafico['SKU'].str.contains(query) | so_grafico['DESCRIPCION'].str.contains(query, na=False)]
+    
+    ventas_por_mes_25 = so_grafico.groupby('MES_NUM')['CANTIDAD'].sum().reindex(range(1, 13), fill_value=0)
+    proyeccion_mes_26 = (ventas_por_mes_25 * factor_escala).round(0)
 
     # --- 6. INTERFAZ ---
     tab1, tab2 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)"])
@@ -98,33 +99,32 @@ if data:
     with tab1:
         st.subheader("📈 Curva de Proyección 2026")
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=meses, y=ventas_mes, name="Sell Out 2025", line=dict(dash='dot')))
-        fig.add_trace(go.Scatter(x=meses, y=proy_2026, name="Proyección 2026", line=dict(width=4, color='green')))
+        fig.add_trace(go.Scatter(x=meses_etiquetas, y=ventas_por_mes_25, name="Sell Out 2025", line=dict(dash='dot', color='gray')))
+        fig.add_trace(go.Scatter(x=meses_etiquetas, y=proyeccion_mes_26, name="Proyección 2026", line=dict(width=4, color='#00FF00')))
         st.plotly_chart(fig, use_container_width=True)
 
         st.subheader("📋 Detalle de Valores Mensuales")
-        df_tabla = pd.DataFrame({
-            "Mes": meses,
-            "Sell Out 2025": ventas_mes.values,
-            "Proyección 2026": proy_2026.values
+        df_resumen = pd.DataFrame({
+            "Mes": meses_etiquetas,
+            "Sell Out 2025": ventas_por_mes_25.values,
+            "Proyección 2026": proyeccion_mes_26.values
         }).set_index("Mes").T
-        st.dataframe(df_tabla, use_container_width=True)
+        st.dataframe(df_resumen, use_container_width=True)
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
+        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
         vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
         
         tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
         tactical['VTA_PROY_26'] = (tactical['VTA_25'] * factor_escala).round(0)
         tactical['VTA_MENSUAL'] = (tactical['VTA_PROY_26'] / 12).round(0)
-        tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
+        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
 
         if query:
-            tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query)]
+            tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
         
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_25', 'VTA_MENSUAL', 'MOS']]
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STK_ACTUAL', 'VTA_25', 'VTA_MENSUAL', 'MOS']]
                      .sort_values('VTA_MENSUAL', ascending=False), use_container_width=True)
-
 else:
-    st.info("Conectando con Drive...")
+    st.info("Esperando conexión con Drive...")
