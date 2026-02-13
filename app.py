@@ -80,17 +80,17 @@ st.sidebar.title("🎮 PARÁMETROS")
 f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
 
     # --- 3. LÓGICA DE FILTRADO ---
-m_filt = maestro.copy()
-    if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
-    if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
+    m_filt = maestro.copy()
+if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
+if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
     si_filt = sell_in[sell_in['SKU'].isin(m_filt['SKU'])]
-    if f_emp: si_filt = si_filt[si_filt['EMPRENDIMIENTO'].isin(f_emp)]
-    if f_cli: si_filt = si_filt[si_filt['CLIENTE_NAME'].isin(f_cli)]
+if f_emp: si_filt = si_filt[si_filt['EMPRENDIMIENTO'].isin(f_emp)]
+if f_cli: si_filt = si_filt[si_filt['CLIENTE_NAME'].isin(f_cli)]
 
     so_filt = sell_out[sell_out['SKU'].isin(m_filt['SKU'])]
-    if f_emp: so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
-    if f_cli: so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
+if f_emp: so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
+if f_cli: so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
 
     # --- 4. MOTOR DE CÁLCULO (UNIFICADO) ---
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
@@ -149,6 +149,7 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
 
 
