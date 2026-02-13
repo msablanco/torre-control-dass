@@ -43,21 +43,22 @@ def load_drive_data():
             df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
             df.columns = [str(c).strip().upper() for c in df.columns]
             
-            # Normalización (Tu lógica original)
+            # Normalización
             df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU', 'CANT': 'CANTIDAD', 'QTY': 'CANTIDAD', 'UNIDADES': 'CANTIDAD'})
             if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
             
-            # PARCHE ESPECÍFICO PARA SELL IN (Col B=Fecha, Col G=Cantidad)
+            # PARCHE SELL IN
             if "SELL_IN_VENTAS" in name.upper():
                 if 'EMPRENDIMIENTO' not in df.columns: df['EMPRENDIMIENTO'] = 'WHOLESALE'
                 if len(df.columns) >= 2: df = df.rename(columns={df.columns[1]: 'FECHA_REF'})
                 if len(df.columns) >= 7: df = df.rename(columns={df.columns[6]: 'CANTIDAD'})
             
+            # ELIMINAR COLUMNAS DUPLICADAS SI EXISTEN
+            df = df.loc[:, ~df.columns.duplicated()]
             dfs[name] = df
         return dfs
     except Exception as e:
-        st.error(f"Error Drive: {e}")
-        return {}
+        st.error(f"Error Drive: {e}"); return {}
 
 data = load_drive_data()
 
@@ -79,24 +80,25 @@ if data:
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
-    so_2025 = so_2025.merge(maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']], on='SKU', how='left')
+    
+    # Aseguramos que el maestro no traiga columnas que ya existen en so_2025 excepto SKU
+    cols_to_use = ['SKU'] + [c for c in ['DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO'] if c in maestro.columns]
+    so_2025 = so_2025.merge(maestro[cols_to_use], on='SKU', how='left')
 
     df_canal = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)] if f_emp else so_2025.copy()
     df_vista = df_canal.copy()
     if query:
         df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query, na=False)]
 
-    # --- 4. ESCALA ---
     base_escala = df_canal['CANTIDAD'].sum() if validar_fijar else df_vista['CANTIDAD'].sum()
     factor_escala = vol_obj / base_escala if base_escala > 0 else 1
 
-    # --- 5. SERIES TIEMPO ---
+    # --- 4. SERIES TIEMPO ---
     meses_idx = range(1, 13)
     meses_labels = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
     v_out_25 = df_vista.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
     v_proy_26 = (v_out_25 * factor_escala).round(0)
 
-    # SELL IN
     v_in_25 = pd.Series(0, index=meses_idx)
     if not sell_in.empty:
         col_f_in = next((c for c in sell_in.columns if any(x in c for x in ['FECHA', 'MES', 'DATE', 'REF'])), None)
@@ -105,12 +107,16 @@ if data:
             si_temp['FECHA_DT'] = pd.to_datetime(si_temp[col_f_in], dayfirst=True, errors='coerce')
             si_25 = si_temp[si_temp['FECHA_DT'].dt.year == 2025].copy()
             si_25['MES_NUM'] = si_25['FECHA_DT'].dt.month
+            
             if f_emp: si_25 = si_25[si_25['EMPRENDIMIENTO'].isin(f_emp)]
             if query:
-                si_25 = si_25[si_25.merge(maestro[['SKU','DESCRIPCION']], on='SKU', how='left')['DESCRIPCION'].str.contains(query, na=False)]
+                # Evitar duplicados en el merge temporal para filtro
+                si_25 = si_25.merge(maestro[['SKU','DESCRIPCION']], on='SKU', how='left')
+                si_25 = si_25[si_25['SKU'].str.contains(query) | si_25['DESCRIPCION'].str.contains(query, na=False)]
+            
             v_in_25 = si_25.groupby('MES_NUM')['CANTIDAD'].sum().reindex(meses_idx, fill_value=0)
 
-    # --- 6. INTERFAZ ---
+    # --- 5. INTERFAZ ---
     tab1, tab2 = st.tabs(["📊 PERFORMANCE", "🎯 ESTRATEGIA DE COMPRA"])
 
     with tab1:
@@ -120,31 +126,26 @@ if data:
         c3.metric("Escala", f"{factor_escala:.4f}")
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25, name="Sell In 2025", line=dict(color='#3366CC', width=3)))
-        fig.add_trace(go.Scatter(x=meses_labels, y=v_out_25, name="Sell Out 2025", line=dict(dash='dot', color='#FF9900')))
-        fig.add_trace(go.Scatter(x=meses_labels, y=v_proy_26, name="Proyección 2026", line=dict(width=4, color='#00FF00')))
+        # Convertimos a lista simple para evitar problemas de índices duplicados en el objeto Series
+        fig.add_trace(go.Scatter(x=meses_labels, y=v_in_25.tolist(), name="Sell In 2025", line=dict(color='#3366CC', width=3)))
+        fig.add_trace(go.Scatter(x=meses_labels, y=v_out_25.tolist(), name="Sell Out 2025", line=dict(dash='dot', color='#FF9900')))
+        fig.add_trace(go.Scatter(x=meses_labels, y=v_proy_26.tolist(), name="Proyección 2026", line=dict(width=4, color='#00FF00')))
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("📋 Detalle Mensual")
         df_m = pd.DataFrame({"Sell In": v_in_25.values, "Sell Out": v_out_25.values, "Proy 2026": v_proy_26.values}, index=meses_labels)
         st.dataframe(df_m.T.style.format(fmt_p), use_container_width=True)
 
     with tab2:
         st.subheader("🏢 Resumen por Segmento (Disciplina y Franja)")
-        
-        # Procesamiento para Matriz
         stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK'})
         vta_sku_25 = df_canal.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'V25'})
         
-        # Unimos todo al Maestro
         tactical = maestro[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']].merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
-        
         tactical['V_PROY_26'] = (tactical['V25'] * factor_escala).round(0)
         tactical['V_MENSUAL'] = (tactical['V_PROY_26'] / 12)
         tactical['MOS'] = (tactical['STK'] / (tactical['V_MENSUAL'].replace(0, 1))).round(1)
         tactical['SUGERIDO'] = ((tactical['V_MENSUAL'] * mos_objetivo) - tactical['STK']).clip(lower=0).round(0)
 
-        # TABLA 1: RESUMEN POR DISCIPLINA Y FRANJA
         resumen_estrategico = tactical.groupby(['DISCIPLINA', 'FRANJA_PRECIO']).agg({
             'V25': 'sum', 'STK': 'sum', 'V_PROY_26': 'sum', 'SUGERIDO': 'sum'
         }).reset_index()
@@ -155,13 +156,11 @@ if data:
         }), use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📝 Detalle de Salud de Inventario por SKU")
+        st.subheader("📝 Detalle por SKU")
         if query:
             tactical = tactical[tactical['SKU'].str.contains(query) | tactical['DESCRIPCION'].str.contains(query, na=False)]
-        
         st.dataframe(tactical.sort_values('V_PROY_26', ascending=False).style.format({
             'STK': fmt_p, 'V25': fmt_p, 'V_PROY_26': fmt_p, 'SUGERIDO': fmt_p, 'MOS': '{:.1f}'
         }), use_container_width=True)
-
 else:
     st.info("Cargando datos...")
