@@ -59,8 +59,8 @@ if data:
                 df['MES_STR'] = df['FECHA_DT'].dt.strftime('%m')
                 df['AÑO'] = df['FECHA_DT'].dt.year
 
- # --- 2. SIDEBAR: PARÁMETROS ---
-  # 1. Obtenemos los valores de Sell In (si existe la columna)
+# --- 2. SIDEBAR: PARÁMETROS ---
+# 1. Obtenemos los valores de Sell In (si existe la columna)
 if 'EMPRENDIMIENTO' in sell_in.columns:
     set_in = set(sell_in['EMPRENDIMIENTO'].dropna().unique())
 else:
@@ -75,11 +75,28 @@ else:
 # 3. Unimos y ordenamos
 opciones_emp = sorted(list(set_in | set_out))
 
-# 4. Ahora sí, el Sidebar
+# 4. Definición de todos los controles del Sidebar (AQUÍ ESTÁ EL CAMBIO)
 st.sidebar.title("🎮 PARÁMETROS")
+
+# Definimos search_query ANTES de usarlo
+search_query = st.sidebar.text_input("🔍 Buscar SKU o Descripción", "").upper()
+
+# Definimos f_emp
 f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
 
-# --- 3. LÓGICA DE FILTRADO ---
+# Definimos f_cli (Clientes)
+opciones_cli = sorted(sell_in['CLIENTE_NAME'].unique()) if 'CLIENTE_NAME' in sell_in.columns else []
+f_cli = st.sidebar.multiselect("Clientes", opciones_cli)
+
+# Definimos f_franja (Franja de Precio)
+opciones_franja = sorted(maestro['FRANJA_PRECIO'].unique()) if 'FRANJA_PRECIO' in maestro.columns else []
+f_franja = st.sidebar.multiselect("Franja de Precio", opciones_franja)
+
+# Definimos target_vol
+target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 500000, 1500000, 1000000, step=50000)
+
+
+# --- 3. LÓGICA DE FILTRADO (AHORA SÍ, TODO TIENE NOMBRE) ---
 m_filt = maestro.copy()
 
 if search_query:
@@ -88,13 +105,14 @@ if search_query:
 if f_franja:
     m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
-# Todas estas líneas deben empezar en la misma columna vertical
+# Filtros para Sell In
 si_filt = sell_in[sell_in['SKU'].isin(m_filt['SKU'])]
 if f_emp:
     si_filt = si_filt[si_filt['EMPRENDIMIENTO'].isin(f_emp)]
 if f_cli:
     si_filt = si_filt[si_filt['CLIENTE_NAME'].isin(f_cli)]
 
+# Filtros para Sell Out
 so_filt = sell_out[sell_out['SKU'].isin(m_filt['SKU'])]
 if f_emp:
     so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
@@ -157,6 +175,7 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
 
 
