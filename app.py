@@ -9,14 +9,6 @@ import io
 
 st.set_page_config(page_title="FILA - Command Center 2026", layout="wide")
 
-# --- ESTILOS PERSONALIZADOS ---
-st.markdown("""
-    <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    </style>
-    """, unsafe_allow_html=True)
-
 # --- CARGA DE DATOS ---
 @st.cache_data(ttl=600)
 def load_drive_data():
@@ -58,117 +50,83 @@ if data:
     stock = data.get('Stock', pd.DataFrame())
     ingresos = data.get('Ingresos', pd.DataFrame())
 
-    # Procesamiento de Fechas
+    # Normalización de Fechas
     for df in [sell_in, sell_out, ingresos]:
         if not df.empty:
-            col_f = next((c for c in df.columns if 'FECHA' in c or 'MES' in c), 'FECHA')
-            df['FECHA_DT'] = pd.to_datetime(df[col_f], dayfirst=True, errors='coerce')
-            df['MES_KEY'] = df['FECHA_DT'].dt.strftime('%Y-%m')
-            df['AÑO'] = df['FECHA_DT'].dt.year
+            col_f = next((c for c in df.columns if 'FECHA' in c or 'MES' in c), None)
+            if col_f:
+                df['FECHA_DT'] = pd.to_datetime(df[col_f], dayfirst=True, errors='coerce')
+                df['MES_KEY'] = df['FECHA_DT'].dt.strftime('%Y-%m')
+                df['AÑO'] = df['FECHA_DT'].dt.year
 
-    # --- SIDEBAR: FILTROS ESTRATÉGICOS ---
-    st.sidebar.title("🎮 CONTROLES")
-    f_emp = st.sidebar.selectbox("EMPRENDIMIENTO", ["TODOS"] + list(sell_in['EMPRENDIMIENTO'].unique() if 'EMPRENDIMIENTO' in sell_in.columns else []))
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("PROYECCIÓN 2026")
+    # --- SIDEBAR ---
+    st.sidebar.title("🎮 FILTROS")
     growth_rate = st.sidebar.slider("% Crecimiento s/ 2025", -50, 150, 20)
     
-    # Filtros Globales
-    st.sidebar.subheader("FILTROS MIX")
-    f_disc = st.sidebar.multiselect("Disciplina", maestro['DISCIPLINA'].unique() if 'DISCIPLINA' in maestro.columns else [])
-    f_gen = st.sidebar.multiselect("Género", maestro['GENERO'].unique() if 'GENERO' in maestro.columns else [])
-    
-    # Aplicar Filtros
     m_filt = maestro.copy()
-    if f_disc: m_filt = m_filt[m_filt['DISCIPLINA'].isin(f_disc)]
-    if f_gen: m_filt = m_filt[m_filt['GENERO'].isin(f_gen)]
-    
-    # --- KPIs DE CABECERA ---
-    st.title("👟 FILA - Torre de Control Estratégica")
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    total_stk = stock[stock['SKU'].isin(m_filt['SKU'])]['CANTIDAD'].sum() if not stock.empty else 0
-    total_si_25 = sell_in[(sell_in['SKU'].isin(m_filt['SKU'])) & (sell_in['AÑO'] == 2025)]['UNIDADES'].sum()
-    total_so_25 = sell_out[(sell_out['SKU'].isin(m_filt['SKU'])) & (sell_out['AÑO'] == 2025)]['CANTIDAD'].sum()
-    
-    kpi1.metric("Stock Actual", f"{total_stk:,.0f} u")
-    kpi2.metric("Sell In 2025", f"{total_si_25:,.0f} u")
-    kpi3.metric("Sell Out 2025", f"{total_so_25:,.0f} u")
-    kpi4.metric("Eficiencia Sell Out", f"{(total_so_25/total_si_25*100):.1f}%" if total_si_25 > 0 else "0%")
+    if not m_filt.empty:
+        if 'DISCIPLINA' in m_filt.columns:
+            f_disc = st.sidebar.multiselect("Disciplina", m_filt['DISCIPLINA'].unique())
+            if f_disc: m_filt = m_filt[m_filt['DISCIPLINA'].isin(f_disc)]
+        if 'GENERO' in m_filt.columns:
+            f_gen = st.sidebar.multiselect("Género", m_filt['GENERO'].unique())
+            if f_gen: m_filt = m_filt[m_filt['GENERO'].isin(f_gen)]
 
     # --- TABS ---
-    t1, t2, t3 = st.tabs(["📊 PERFORMANCE & MIX", "⚡ TACTICAL & MOS", "🔮 PROYECCIONES 2026"])
+    t1, t2, t3 = st.tabs(["📊 ESTRATEGIA", "⚡ TACTICAL & MOS", "🔮 PROYECCIÓN 2026"])
 
     with t1:
-        st.subheader("Análisis de Demanda y Salud de Inventario")
+        st.subheader("Performance Sell In vs Sell Out")
         c1, c2 = st.columns([2, 1])
-        
         with c1:
-            # Línea de tiempo Sell In vs Sell Out
-            si_time = sell_in[sell_in['SKU'].isin(m_filt['SKU'])].groupby('MES_KEY')['UNIDADES'].sum().reset_index()
-            so_time = sell_out[sell_out['SKU'].isin(m_filt['SKU'])].groupby('MES_KEY')['CANTIDAD'].sum().reset_index()
-            fig_vta = go.Figure()
-            fig_vta.add_trace(go.Scatter(x=si_time['MES_KEY'], y=si_time['UNIDADES'], name="Sell In (Dass)", line=dict(color='#1f77b4', width=3)))
-            fig_vta.add_trace(go.Scatter(x=so_time['MES_KEY'], y=so_time['CANTIDAD'], name="Sell Out (Mercado)", line=dict(color='#ff7f0e', width=3, dash='dot')))
-            fig_vta.update_layout(title="Curva de Ventas Histórica", hovermode="x unified")
-            st.plotly_chart(fig_vta, use_container_width=True)
-            
+            si_t = sell_in[sell_in['SKU'].isin(m_filt['SKU'])].groupby('MES_KEY')['UNIDADES'].sum().reset_index()
+            so_t = sell_out[sell_out['SKU'].isin(m_filt['SKU'])].groupby('MES_KEY')['CANTIDAD'].sum().reset_index()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=si_t['MES_KEY'], y=si_t['UNIDADES'], name="Sell In", line=dict(color='#1f77b4', width=3)))
+            fig.add_trace(go.Scatter(x=so_t['MES_KEY'], y=so_t['CANTIDAD'], name="Sell Out", line=dict(color='#ff7f0e', dash='dot')))
+            st.plotly_chart(fig, use_container_width=True)
         with c2:
-            # Mix por Disciplina
-            mix_data = sell_out[sell_out['SKU'].isin(m_filt['SKU'])].merge(maestro[['SKU', 'DISCIPLINA']], on='SKU')
-            fig_mix = px.pie(mix_data, values='CANTIDAD', names='DISCIPLINA', title="Participación de Sell Out", hole=.4)
-            st.plotly_chart(fig_mix, use_container_width=True)
+            if not sell_out.empty and 'DISCIPLINA' in m_filt.columns:
+                mix = sell_out[sell_out['SKU'].isin(m_filt['SKU'])].merge(m_filt[['SKU', 'DISCIPLINA']], on='SKU')
+                st.plotly_chart(px.pie(mix, values='CANTIDAD', names='DISCIPLINA', hole=.4), use_container_width=True)
 
     with t2:
-        st.subheader("Months of Stock y Ranking de Productos")
-        # Lógica MOS avanzada
-        vta_prom_25 = sell_out[(sell_out['SKU'].isin(m_filt['SKU'])) & (sell_out['AÑO'] == 2025)].groupby('SKU')['CANTIDAD'].mean()
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum()
+        st.subheader("Ranking MOS (Months of Stock)")
+        # Cálculo de MOS Dinámico (Evitando el error de columnas)
+        vta_25 = sell_out[sell_out['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].mean().reset_index().rename(columns={'CANTIDAD': 'VTA_PROM'})
+        stk_s = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK_ACTUAL'})
         
-        ranking = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_prom_25, on='SKU', how='left').fillna(0)
-        ranking.columns = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'GENERO', 'FRANJA', 'STOCK', 'VTA_PROM_25']
-        ranking['VTA_PROY_26'] = ranking['VTA_PROM_25'] * (1 + growth_rate/100)
-        ranking['MOS'] = (ranking['STOCK'] / ranking['VTA_PROY_26']).replace([float('inf')], 99).round(1)
+        # Merge Seguro
+        ranking = m_filt.merge(stk_s, on='SKU', how='left').merge(vta_25, on='SKU', how='left').fillna(0)
         
-        # Clasificación
-        def classify(row):
-            if row['MOS'] < 2: return 'Crítico (Quiebre)'
-            if row['MOS'] > 8: return 'Exceso (Sobre-stock)'
-            return 'Saludable'
-        ranking['ESTADO'] = ranking.apply(classify, axis=1)
+        # Proyectar venta 2026
+        ranking['VTA_PROY_26'] = (ranking['VTA_PROM'] * (1 + growth_rate/100)).round(0)
+        ranking['MOS'] = (ranking['STOCK_ACTUAL'] / ranking['VTA_PROY_26']).replace([float('inf')], 99).round(1)
         
-        st.dataframe(ranking.sort_values('VTA_PROY_26', ascending=False), use_container_width=True)
+        # Mostrar solo columnas útiles
+        cols_show = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STOCK_ACTUAL', 'VTA_PROY_26', 'MOS']
+        cols_present = [c for c in cols_show if c in ranking.columns]
+        st.dataframe(ranking[cols_present].sort_values('VTA_PROY_26', ascending=False), use_container_width=True)
 
     with t3:
         st.subheader("Simulador de Disponibilidad 2026")
-        sku_sel = st.selectbox("Seleccionar Producto Crítico", m_filt['SKU'].unique())
-        
+        sku_sel = st.selectbox("Seleccionar SKU", m_filt['SKU'].unique())
         if sku_sel:
-            # Construcción de la Línea de Tiempo de Oportunidad
             meses_26 = pd.date_range(start='2026-01-01', periods=12, freq='MS').strftime('%Y-%m')
-            
-            # Datos
-            stk_actual = stock[stock['SKU'] == sku_sel]['CANTIDAD'].sum()
+            stk_ini = stock[stock['SKU'] == sku_sel]['CANTIDAD'].sum()
             vta_base = sell_out[(sell_out['SKU'] == sku_sel) & (sell_out['AÑO'] == 2025)]['CANTIDAD'].mean()
-            vta_p = vta_base * (1 + growth_rate/100)
+            vta_p = (vta_base if not pd.isna(vta_base) else 0) * (1 + growth_rate/100)
             ings = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_KEY')['UNIDADES'].sum()
             
-            # Evolución
-            stk_evo = []
-            c_stk = stk_actual
+            stk_e = []
+            curr = stk_ini
             for m in meses_26:
-                c_stk = c_stk + ings.get(m, 0) - vta_p
-                stk_evo.append(max(0, c_stk))
+                curr = curr + ings.get(m, 0) - vta_p
+                stk_e.append(max(0, curr))
             
-            fig_proj = go.Figure()
-            fig_proj.add_trace(go.Bar(x=meses_26, y=[ings.get(m, 0) for m in meses_26], name="Ingresos Planificados", marker_color='#2ecc71', opacity=0.6))
-            fig_proj.add_trace(go.Scatter(x=meses_26, y=stk_evo, name="Stock Proyectado", line=dict(color='#e74c3c', width=4)))
-            fig_proj.add_hline(y=vta_p * 2, line_dash="dash", line_color="gray", annotation_text="Stock de Seguridad (2 meses)")
-            
-            fig_proj.update_layout(title=f"Proyección de Abastecimiento para {sku_sel}", xaxis_title="Meses 2026", yaxis_title="Unidades")
-            st.plotly_chart(fig_proj, use_container_width=True)
-            
-            st.warning(f"💡 Al ritmo proyectado, el producto tendrá un stock promedio de {sum(stk_evo)/12:.0f} unidades en 2026.")
-
+            fig_p = go.Figure()
+            fig_p.add_trace(go.Bar(x=meses_26, y=[ings.get(m,0) for m in meses_26], name="Arribos 2026", marker_color='green', opacity=0.5))
+            fig_p.add_trace(go.Scatter(x=meses_26, y=stk_e, name="Stock Proyectado", line=dict(color='red', width=4)))
+            st.plotly_chart(fig_p, use_container_width=True)
 else:
-    st.info("Configurá los secretos y subí los archivos al Drive para activar la Torre de Control.")
+    st.info("Subí los archivos al Drive para iniciar.")
