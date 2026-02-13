@@ -33,7 +33,6 @@ def load_drive_data():
                 fh.seek(0)
                 df = pd.read_csv(fh, encoding='latin-1', sep=None, engine='python')
                 df.columns = [str(c).strip().upper() for c in df.columns]
-                # Normalización de nombres de columnas comunes
                 df = df.rename(columns={'ARTICULO': 'SKU', 'CODIGO': 'SKU', 'CLIENTE': 'CLIENTE_NAME'})
                 if 'SKU' in df.columns: df['SKU'] = df['SKU'].astype(str).str.strip().str.upper()
                 dfs[name] = df
@@ -66,59 +65,60 @@ if data:
     target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 500000, 1500000, 1000000, step=50000)
     
     st.sidebar.markdown("---")
-    # El filtro de emprendimiento ahora afecta a ambos archivos
-    opciones_emp = sorted(list(set(sell_in['EMPRENDIMIENTO'].dropna().unique()) | set(sell_out['EMPRENDIMIENTO'].dropna().unique())))
+    opciones_emp = sorted(list(set(sell_in['EMPRENDIMIENTO'].dropna().unique()) | set(sell_out['EMPRENDIMIENTO'].dropna().unique()))) if 'EMPRENDIMIENTO' in sell_in.columns else []
     f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
     
-    f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
-    f_franja = st.sidebar.multiselect("Franja de Precio", maestro['FRANJA_PRECIO'].unique() if 'FRANJA_PRECIO' in maestro.columns else [])
+    f_cli = st.sidebar.multiselect("Clientes", sorted(sell_in['CLIENTE_NAME'].unique()) if 'CLIENTE_NAME' in sell_in.columns else [])
+    
+    if 'FRANJA_PRECIO' in maestro.columns:
+        opciones_franja = sorted([str(x) for x in maestro['FRANJA_PRECIO'].dropna().unique()])
+    else:
+        opciones_franja = []
+    f_franja = st.sidebar.multiselect("Franja de Precio", opciones_franja)
 
     # --- LÓGICA DE FILTRADO ---
     m_filt = maestro.copy()
     if search_query: m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
     if f_franja: m_filt = m_filt[m_filt['FRANJA_PRECIO'].isin(f_franja)]
 
-    # Aplicamos filtro de emprendimiento y cliente a Sell In
     si_filt = sell_in[sell_in['SKU'].isin(m_filt['SKU'])]
     if f_emp: si_filt = si_filt[si_filt['EMPRENDIMIENTO'].isin(f_emp)]
     if f_cli: si_filt = si_filt[si_filt['CLIENTE_NAME'].isin(f_cli)]
 
-    # Aplicamos filtro de emprendimiento y cliente a Sell Out
     so_filt = sell_out[sell_out['SKU'].isin(m_filt['SKU'])]
     if f_emp: so_filt = so_filt[so_filt['EMPRENDIMIENTO'].isin(f_emp)]
     if f_cli: so_filt = so_filt[so_filt['CLIENTE_NAME'].isin(f_cli)]
 
-    # --- TABS ---
-    tab1, tab2 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)"])
+    # --- TABS (DEFINICIÓN DE LAS 3 SOLAPAS) ---
+    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
+    meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
+
+    # =========================================================
+    # SOLAPA 1: PERFORMANCE & PROYECCIÓN (MANTENIDA TAL CUAL)
+    # =========================================================
     with tab1:
         st.subheader("Análisis de Demanda y Proyección Unificada")
-        meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
         
-        # Agrupaciones
-        si_25 = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index()
-        so_25 = so_filt[so_filt['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index()
+        si_25 = si_filt[si_filt['AÑO'] == 2025].groupby('MES_STR')['UNIDADES'].sum().reset_index() if 'UNIDADES' in si_filt.columns else pd.DataFrame(columns=['MES_STR', 'UNIDADES'])
+        so_25 = so_filt[so_filt['AÑO'] == 2025].groupby('MES_STR')['CANTIDAD'].sum().reset_index() if 'CANTIDAD' in so_filt.columns else pd.DataFrame(columns=['MES_STR', 'CANTIDAD'])
         
-        # Proyección basada en el Volumen Objetivo (Target Vol)
-        total_so_25 = so_25['CANTIDAD'].sum()
+        total_so_25 = so_25['CANTIDAD'].sum() if not so_25.empty else 0
         if total_so_25 > 0:
             so_25['PROY_2026'] = ((so_25['CANTIDAD'] / total_so_25) * target_vol).round(0)
         else:
             so_25['PROY_2026'] = 0
 
-        # Preparación de tabla de visualización
         base_meses = pd.DataFrame({'MES_STR': [str(i).zfill(2) for i in range(1, 13)]})
         df_plot = base_meses.merge(si_25, on='MES_STR', how='left').merge(so_25, on='MES_STR', how='left').fillna(0)
         df_plot['MES_NOM'] = df_plot['MES_STR'].map(meses_nombres)
 
-        # Gráfico principal
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['UNIDADES'], name="Sell In 2025", line=dict(color='#1f77b4', width=2)))
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
         fig.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="grafico_tab1")
 
-        # TABLA 1: DATOS MENSUALES CON TOTAL
         st.markdown("### 📋 Detalle de Valores Mensuales")
         df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
         df_t1.columns = ['Mes', 'Sell In 2025', 'Sell Out 2025', 'Proyección 2026']
@@ -126,90 +126,86 @@ if data:
         df_t1['TOTAL'] = df_t1.sum(axis=1)
         st.dataframe(df_t1.style.format("{:,.0f}"), use_container_width=True)
 
-        # TABLA 2: DISCIPLINA CON TOTAL
         st.markdown("### 🧪 Proyección 2026 por Disciplina")
-        if not so_filt.empty:
+        if not so_filt.empty and 'DISCIPLINA' in m_filt.columns:
             so_disc = so_filt[so_filt['AÑO'] == 2025].merge(m_filt[['SKU', 'DISCIPLINA']], on='SKU')
             total_ref = so_disc['CANTIDAD'].sum()
-            disc_pivot = so_disc.groupby(['DISCIPLINA', 'MES_STR'])['CANTIDAD'].sum().reset_index()
             if total_ref > 0:
+                disc_pivot = so_disc.groupby(['DISCIPLINA', 'MES_STR'])['CANTIDAD'].sum().reset_index()
                 disc_pivot['PROY_2026'] = ((disc_pivot['CANTIDAD'] / total_ref) * target_vol).round(0)
                 tabla_disc = disc_pivot.pivot(index='DISCIPLINA', columns='MES_STR', values='PROY_2026').fillna(0)
                 tabla_disc.columns = [meses_nombres.get(col, col) for col in tabla_disc.columns]
                 tabla_disc['TOTAL'] = tabla_disc.sum(axis=1)
                 st.dataframe(tabla_disc.sort_values('TOTAL', ascending=False).style.format("{:,.0f}"), use_container_width=True)
-# --- CONTINUACIÓN DEL CÓDIGO (Tab 2 y Tab 3) ---
 
-  with tab2:
+    # =========================================================
+    # SOLAPA 2: TACTICAL (UNIFICADA POR SKU + INGRESOS + FIX INF)
+    # =========================================================
+    with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # 1. Unificar a una fila por SKU (Agrupación)
-        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index() [cite: 16]
-        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'}) [cite: 16]
+        # 1. Agrupación por SKU para evitar duplicados
+        stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STK_ACTUAL'})
+        ing_sku = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'})
         
-        # 2. Agregar Ingresos Futuros (Columna solicitada)
-        ing_futuros = ingresos.groupby('SKU')['UNIDADES'].sum().reset_index().rename(columns={'UNIDADES': 'INGRESOS_FUTUROS'}) [cite: 21]
+        # 2. Venta proyectada por SKU (basada en el share 2025 del SKU)
+        vta_sku_25 = so_filt[so_filt['AÑO'] == 2025].groupby('SKU')['CANTIDAD'].sum().reset_index()
+        total_vta_25 = vta_sku_25['CANTIDAD'].sum()
         
-        # 3. Consolidado Tactical Único
-        tactical = m_filt.drop_duplicates('SKU').merge(stk_sku, on='SKU', how='left') \
-                         .merge(vta_sku_25, on='SKU', how='left') \
-                         .merge(ing_futuros, on='SKU', how='left').fillna(0) [cite: 17]
-        
-        # 4. Cálculo de Proyección y MOS (Evitando -inf)
-        vta_tot_25 = vta_sku_25['CANTIDAD'].sum()
-        factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1 [cite: 16]
-        
-        tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0) [cite: 17]
-        
-        # Corrección de -inf: Si la venta es 0, el MOS es 99 (exceso) en lugar de infinito
-        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), -float('inf')], 99).fillna(0).round(1) [cite: 17]
-        
-        # KPIs Corregidos
-        c1, c2, c3 = st.columns(3)
-        c1.metric("SKUs en Riesgo de Quiebre", len(tactical[tactical['MOS'] < 2.5])) [cite: 18, 19]
-        c2.metric("SKUs con Exceso", len(tactical[tactical['MOS'] > 8])) [cite: 18, 19]
-        # Stock Promedio filtrando valores nulos para evitar el "-inf" en el KPI
-        mos_real = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
-        c3.metric("Stock Promedio (MOS)", f"{mos_real:.1f} meses" if pd.notnull(mos_real) else "0.0 meses") [cite: 19]
+        if total_vta_25 > 0:
+            vta_sku_25['VTA_PROY_MENSUAL'] = (vta_sku_25['CANTIDAD'] / total_vta_25 * target_vol / 12).round(0)
+        else:
+            vta_sku_25['VTA_PROY_MENSUAL'] = 0
 
-        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
-                     .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
+        # 3. Consolidación (Unificar a una fila por SKU usando el Maestro filtrado)
+        tactical = m_filt.drop_duplicates('SKU')[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'FRANJA_PRECIO']] \
+                         .merge(stk_sku, on='SKU', how='left') \
+                         .merge(ing_sku, on='SKU', how='left') \
+                         .merge(vta_sku_25[['SKU', 'VTA_PROY_MENSUAL']], on='SKU', how='left').fillna(0)
+        
+        # 4. Cálculo de MOS (Fix -inf y +inf)
+        # Si no hay venta, el MOS es 99 (indicando que el stock no se mueve)
+        tactical['MOS'] = (tactical['STK_ACTUAL'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), -float('inf')], 99).fillna(0).round(1)
+        
+        def color_mos(val):
+            if val < 2.5: return 'background-color: #ffcccc' # Rojo: Quiebre
+            if val > 8: return 'background-color: #ffffcc'  # Amarillo: Exceso
+            return 'background-color: #ccffcc'              # Verde: Saludable
+
+        st.dataframe(
+            tactical[['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'INGRESOS_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS']]
+            .sort_values('VTA_PROY_MENSUAL', ascending=False)
+            .style.applymap(color_mos, subset=['MOS'])
+            .format({'STK_ACTUAL': '{:,.0f}', 'INGRESOS_FUTUROS': '{:,.0f}', 'VTA_PROY_MENSUAL': '{:,.0f}'}),
+            use_container_width=True
+        )
+
+    # =========================================================
+    # SOLAPA 3: ESCENARIOS (LÍNEA DE TIEMPO)
+    # =========================================================
     with tab3:
-        st.subheader("🔮 Línea de Tiempo de Oportunidad por SKU")
-        sku_sel = st.selectbox("Seleccionar Producto Crítico", tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique())
-        
-        if sku_sel:
-            m_sku = tactical[tactical['SKU'] == sku_sel].iloc[0]
-            stk_inicial = m_sku['STK_ACTUAL']
-            vta_mensual = m_sku['VTA_PROY_MENSUAL']
+        st.subheader("🔮 Línea de Tiempo Dinámica de Oportunidad")
+        if not tactical.empty:
+            sku_sel = st.selectbox("Seleccionar SKU para análisis 360", tactical['SKU'].unique(), key="sel_sku_tab3")
             
-            # Arribos planificados (Ingresos 2026)
-            ing_sku = ingresos[ingresos['SKU'] == sku_sel].groupby('MES_STR')['UNIDADES'].sum()
+            # Datos del SKU seleccionado
+            sku_data = tactical[tactical['SKU'] == sku_sel].iloc[0]
+            stk_ini = sku_data['STK_ACTUAL']
+            vta_m = sku_data['VTA_PROY_MENSUAL']
             
-            meses_plot = [meses_nombres[str(i).zfill(2)] for i in range(1, 13)]
-            evolucion_stk = []
-            current_stk = stk_inicial
+            # Simulación de agotamiento mes a mes
+            stk_evol = []
+            curr = stk_ini
+            for _ in range(12):
+                curr = max(0, curr - vta_m)
+                stk_evol.append(curr)
+                
+            fig_evol = go.Figure()
+            fig_evol.add_trace(go.Scatter(x=list(meses_nombres.values()), y=stk_evol, fill='tozeroy', name="Stock Proyectado", line=dict(color='#2ecc71')))
+            fig_evol.add_hline(y=vta_m * 2.5, line_dash="dash", line_color="red", annotation_text="Punto Crítico (2.5 MOS)")
             
-            for i in range(1, 13):
-                m_str = str(i).zfill(2)
-                arribo = ing_sku.get(m_str, 0)
-                current_stk = (current_stk + arribo) - vta_mensual
-                evolucion_stk.append(max(0, current_stk))
-            
-            fig_op = go.Figure()
-            # Área de Agotamiento
-            fig_op.add_trace(go.Scatter(x=meses_plot, y=evolucion_stk, name="Evolución Stock Proyectado", 
-                                        line=dict(color='#e74c3c', width=4), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'))
-            # Barras de Ingresos
-            fig_op.add_trace(go.Bar(x=meses_plot, y=[ing_sku.get(str(i).zfill(2), 0) for i in range(1, 13)], 
-                                    name="Arribos Planeados 2026", marker_color='#2ecc71', opacity=0.7))
-            
-            fig_op.add_hline(y=vta_mensual * 2, line_dash="dash", line_color="gray", annotation_text="Stock Seguridad (2 meses)")
-            
-            fig_op.update_layout(title=f"Cronograma de Disponibilidad: {sku_sel} ({m_sku['DESCRIPCION']})", 
-                                 xaxis_title="Meses 2026", yaxis_title="Unidades", hovermode="x unified")
-            st.plotly_chart(fig_op, use_container_width=True)
-            
-            st.info(f"💡 **Análisis:** Para el SKU {sku_sel}, se proyecta una venta de {vta_mensual:,.0f} unidades mensuales. "
-                    f"El stock {'se agota' if min(evolucion_stk) == 0 else 'está cubierto'} durante el año.")
+            fig_evol.update_layout(title=f"Agotamiento Proyectado 2026: {sku_sel}", hovermode="x unified")
+            st.plotly_chart(fig_evol, use_container_width=True)
 
+else:
+    st.info("Cargando datos desde Google Drive...")
