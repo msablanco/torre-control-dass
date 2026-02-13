@@ -34,13 +34,13 @@ def load_drive_data():
             dfs[name] = df
         return dfs
     except Exception as e:
-        st.error(f"Error carga: {e}")
+        st.error(f"Error carga Drive: {e}")
         return {}
 
 data = load_drive_data()
 
 if data:
-    # 1. Preparación de Dataframes base
+    # Preparación de Dataframes
     sell_out = data.get('Sell_Out', pd.DataFrame())
     maestro = data.get('Maestro_Productos', pd.DataFrame()).drop_duplicates('SKU')
     stock = data.get('Stock', pd.DataFrame())
@@ -50,58 +50,53 @@ if data:
         sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f], dayfirst=True, errors='coerce')
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
-    # --- SIDEBAR: PARÁMETROS Y VALIDACIÓN ---
-    st.sidebar.title("🎮 PARÁMETROS")
-    search_query = st.sidebar.text_input("🔍 Buscar SKU o Descripción", "").upper()
+    # --- SIDEBAR: PARÁMETROS Y EL NUEVO BOTÓN DE VALIDACIÓN ---
+    st.sidebar.title("🎮 CONTROL DE FORECAST")
     
-    target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 100000, 2000000, 700000, step=50000)
+    # 1. Definir Objetivo
+    target_vol = st.sidebar.number_input("Volumen Total Objetivo 2026", value=700000, step=50000)
     
-    # CUADRO DE VALIDACIÓN (TU PEDIDO)
-    # Al tildar esto, se "ancla" el cálculo de volumen global
-    validar_forecast = st.sidebar.checkbox("✅ VALIDAR Y CONGELAR PROYECCIÓN", value=False)
+    # 2. CUADRO DE VALIDACIÓN (EL BOTÓN QUE SOLICITASTE)
+    validar_forecast = st.sidebar.checkbox("🔒 VALIDAR Y CONGELAR PROYECCIÓN", value=False, 
+                                           help="Al tildar, el prorrateo se fija sobre el total de la empresa y no cambia al filtrar SKUs.")
 
-    # Filtros de abajo (Solo afectan la vista si el checkbox está activo)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔍 FILTROS DE VISTA")
+    search_query = st.sidebar.text_input("Buscar SKU o Descripción", "").upper()
+    
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique())
-    f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
+    f_emp = st.sidebar.multiselect("Filtrar por Emprendimiento", opciones_emp)
 
-    # --- 2. LÓGICA DE BLINDAJE ---
-    # Calculamos la venta total 2025 para el prorrateo
+    # --- 3. LÓGICA DE CÁLCULO BLINDADO ---
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy()
     venta_total_real_2025 = so_2025['CANTIDAD'].sum()
 
-    # Si se tilda el cuadro, calculamos el factor sobre el total de la empresa
-    # y lo guardamos en session_state para que no cambie al filtrar.
+    # Si está tildado, el factor es (Objetivo / Total Empresa) -> INVARIABLE
     if validar_forecast:
-        factor_escalamiento = target_vol / venta_total_real_2025 if venta_total_real_2025 > 0 else 1
-        st.session_state['factor_fijo'] = factor_escalamiento
-        st.sidebar.success(f"PROYECCIÓN BLINDADA (Factor: {factor_escalamiento:.4f})")
+        factor_final = target_vol / venta_total_real_2025 if venta_total_real_2025 > 0 else 1
+        st.sidebar.success(f"Cálculo fijado sobre {venta_total_real_2025:,.0f} unidades.")
     else:
-        # Si no está validado, usa el volumen de lo que haya filtrado (comportamiento original)
-        venta_filtrada = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)]['CANTIDAD'].sum() if f_emp else venta_total_real_2025
-        st.session_state['factor_fijo'] = target_vol / venta_filtrada if venta_filtrada > 0 else 1
-        st.sidebar.warning("⚠️ Proyección dinámica (se recalcula al filtrar)")
+        # Si no está tildado, recalcula según lo que ve (comportamiento que no querías)
+        venta_actual = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)]['CANTIDAD'].sum() if f_emp else venta_total_real_2025
+        factor_final = target_vol / venta_actual if venta_actual > 0 else 1
+        st.sidebar.warning("⚠️ Proyección dinámica activa")
 
-    # --- 3. PROCESAMIENTO DE TABLA (TACTICAL) ---
-    # Consolidamos Stock y Venta por SKU
+    # --- 4. CONSTRUCCIÓN DE LA TABLA TACTICAL ---
     stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
-    vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
+    vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_2025'})
 
-    # Unión maestra
+    # Unión maestra (tactical siempre se define aquí para evitar NameError)
     tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
 
-    # APLICACIÓN DEL FACTOR BLINDADO
-    f_final = st.session_state['factor_fijo']
-    tactical['VTA_PROY_2026'] = (tactical['VTA_25'] * f_final).round(0)
+    # Aplicamos el factor (fijo o dinámico según el botón)
+    tactical['VTA_PROY_2026'] = (tactical['VTA_2025'] * factor_final).round(0)
     tactical['VTA_MENSUAL'] = (tactical['VTA_PROY_2026'] / 12).round(0)
-    
-    # MOS Corregido contra infinitos
     tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
 
-    # --- 4. FILTRADO DE VISTA ---
-    # Los filtros de canal y búsqueda solo afectan qué filas se muestran, NO el cálculo anterior
+    # --- 5. FILTRADO DE VISTA (NO AFECTA AL CÁLCULO) ---
     df_vista = tactical.copy()
     if f_emp:
-        # Para filtrar por canal en la vista, necesitamos traer la info de emprendimiento al tactical
+        # Obtenemos los SKUs que pertenecen a ese emprendimiento en 2025
         skus_canal = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)]['SKU'].unique()
         df_vista = df_vista[df_vista['SKU'].isin(skus_canal)]
     
@@ -112,13 +107,15 @@ if data:
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
     with tab2:
-        st.subheader("⚡ Matriz de Salud de Inventario (Blindada)")
-        st.dataframe(df_vista[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_25', 'VTA_MENSUAL', 'MOS']]
+        st.subheader("⚡ Matriz de Salud de Inventario")
+        # Mostramos solo registros con actividad
+        df_ver = df_vista[(df_vista['STOCK'] > 0) | (df_vista['VTA_2025'] > 0)]
+        
+        st.dataframe(df_ver[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_MENSUAL', 'MOS']]
                      .sort_values('VTA_MENSUAL', ascending=False), use_container_width=True)
 
     with tab3:
-        # Aquí evitamos el NameError asegurando que tactical existe siempre
-        st.subheader("🔮 Detalle de Proyección")
-        if not df_vista.empty:
-            st.write(f"Venta Proyectada del segmento seleccionado: {df_vista['VTA_PROY_2026'].sum():,.0f} unidades.")
-            st.write(f"Representa el {(df_vista['VTA_PROY_2026'].sum() / target_vol):.1%} del objetivo total.")
+        st.subheader("🔮 Detalle de Escenario")
+        # Aquí tactical existe siempre, así que no habrá NameError
+        total_proy = df_ver['VTA_PROY_2026'].sum()
+        st.info(f"La selección actual representa una proyección anual de {total_proy:,.0f} unidades.")
