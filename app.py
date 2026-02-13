@@ -60,16 +60,24 @@ if data:
                 df['AÑO'] = df['FECHA_DT'].dt.year
 
  # --- 2. SIDEBAR: PARÁMETROS ---
-    st.sidebar.title("🎮 PARÁMETROS")
-    
-    # Creamos dos conjuntos vacíos
-    set_in = set(sell_in['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_in.columns else set()
-    set_out = set(sell_out['EMPRENDIMIENTO'].dropna().unique()) if 'EMPRENDIMIENTO' in sell_out.columns else set()
-    
-    # Los unimos correctamente usando el símbolo | entre dos conjuntos (sets)
-    opciones_emp = sorted(list(set_in | set_out))
-    
-    f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
+  # 1. Obtenemos los valores de Sell In (si existe la columna)
+if 'EMPRENDIMIENTO' in sell_in.columns:
+    set_in = set(sell_in['EMPRENDIMIENTO'].dropna().unique())
+else:
+    set_in = set()
+
+# 2. Obtenemos los valores de Sell Out (si existe la columna)
+if 'EMPRENDIMIENTO' in sell_out.columns:
+    set_out = set(sell_out['EMPRENDIMIENTO'].dropna().unique())
+else:
+    set_out = set()
+
+# 3. Unimos y ordenamos
+opciones_emp = sorted(list(set_in | set_out))
+
+# 4. Ahora sí, el Sidebar
+st.sidebar.title("🎮 PARÁMETROS")
+f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
 
     # --- 3. LÓGICA DE FILTRADO ---
     m_filt = maestro.copy()
@@ -141,4 +149,5 @@ with tab3:
             # Aquí va el cálculo de fig_stk (asegúrate de que fig_stk se cree aquí)
             if 'fig_stk' in locals():
                 st.plotly_chart(fig_stk, use_container_width=True, key="grafico_tab_3_stk")
+
 
