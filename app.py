@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="FILA - Forecast Blindado", layout="wide")
+st.set_page_config(page_title="FILA - Torre de Control", layout="wide")
 
 @st.cache_data(ttl=600)
 def load_drive_data():
@@ -50,14 +50,14 @@ if data:
         sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f], dayfirst=True, errors='coerce')
         sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
-    # --- SIDEBAR: ESTO DEBE APARECER PRIMERO ---
-    st.sidebar.header("🎯 CONTROL DE VOLUMEN")
+    # --- SIDEBAR: PARÁMETROS ---
+    st.sidebar.header("🎯 CONFIGURACIÓN")
     
     vol_obj = st.sidebar.number_input("Volumen Total Objetivo 2026", value=1000000, step=50000)
     
-    # EL BOTÓN DE VALIDACIÓN (CHECKBOX)
-    # Si lo marcas, los números se quedan fijos aunque filtres.
-    validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False)
+    # CUADRO DE VALIDACIÓN: VISIBLE Y CLARO
+    validar_fijar = st.sidebar.checkbox("✅ VALIDAR Y FIJAR ESCALA", value=False, 
+                                        help="Tilda este cuadro para que la proyección sea fija y no cambie al filtrar SKUs.")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔍 FILTROS DE VISTA")
@@ -66,42 +66,41 @@ if data:
     opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique()) if not sell_out.empty else []
     f_emp = st.sidebar.multiselect("Canal / Emprendimiento", opciones_emp)
 
-    # --- 2. LÓGICA DE ESCALAMIENTO BLINDADA ---
+    # --- 2. LÓGICA DE ESCALAMIENTO (BLINDAJE) ---
     so_2025 = sell_out[sell_out['AÑO'] == 2025].copy() if not sell_out.empty else pd.DataFrame()
-    
-    # Venta total real de toda la empresa en 2025
     venta_total_empresa = so_2025['CANTIDAD'].sum() if not so_2025.empty else 0
 
     if validar_fijar:
-        # SI ESTÁ MARCADO: El factor se calcula sobre el TOTAL DE LA EMPRESA
-        # No importa qué busques en el cuadro de texto, este número no cambia.
+        # BLOQUEO: El factor se basa en el TOTAL de la empresa, no en el filtro
         factor_escala = vol_obj / venta_total_empresa if venta_total_empresa > 0 else 1
-        st.sidebar.success(f"🔒 ESCALA FIJADA: {factor_escala:.4f}")
+        st.sidebar.success(f"🔒 ESCALA BLOQUEADA: {factor_escala:.4f}")
     else:
-        # SI ESTÁ DESMARCADO: Recalcula según lo filtrado (el error que tenías)
+        # DINÁMICO: Recalcula según lo que ves (esto es lo que hace que los números exploten)
         df_temp = so_2025.copy()
         if f_emp:
             df_temp = df_temp[df_temp['EMPRENDIMIENTO'].isin(f_emp)]
         if query:
             df_temp = df_temp[df_temp['SKU'].str.contains(query)]
         
-        venta_en_pantalla = df_temp['CANTIDAD'].sum() if not df_temp.empty else 0
-        factor_escala = vol_obj / venta_en_pantalla if venta_en_pantalla > 0 else 1
+        venta_actual = df_temp['CANTIDAD'].sum() if not df_temp.empty else 0
+        factor_escala = vol_obj / venta_actual if venta_actual > 0 else 1
         st.sidebar.warning("⚠️ ESCALA DINÁMICA (Recalculando)")
 
-    # --- 3. PROCESAMIENTO TACTICAL (MOS) ---
+    # --- 3. PROCESAMIENTO TACTICAL ---
     stk_sku = stock.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
     vta_sku_25 = so_2025.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_2025'})
 
-    # Generamos la tabla 'tactical' siempre aquí para evitar el NameError
+    # Definimos la tabla principal antes de las pestañas
     tactical = maestro.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').fillna(0)
+    
+    # Cálculos Proyectados
+    tactical['VTA_PROY_2026'] = (tactical['VTA_2025'] * factor_escala).round(0)
+    tactical['VTA_MENSUAL'] = (tactical['VTA_PROY_2026'] / 12).round(0)
+    
+    # Evitamos división por cero para el MOS
+    tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
 
-    # Aplicamos la proyección
-    tactical['VTA_PROY_ANUAL'] = (tactical['VTA_2025'] * factor_escala).round(0)
-    tactical['VTA_PROY_MENSUAL'] = (tactical['VTA_PROY_ANUAL'] / 12).round(0)
-    tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
-
-    # --- 4. FILTRADO DE VISTA (SOLO OCULTA FILAS, NO AFECTA EL CÁLCULO) ---
+    # --- 4. FILTRADO DE VISTA ---
     df_vista = tactical.copy()
     if f_emp:
         skus_canal = so_2025[so_2025['EMPRENDIMIENTO'].isin(f_emp)]['SKU'].unique()
@@ -109,16 +108,25 @@ if data:
     if query:
         df_vista = df_vista[df_vista['SKU'].str.contains(query) | df_vista['DESCRIPCION'].str.contains(query)]
 
-    # --- INTERFAZ ---
-    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 DETALLE"])
+    # --- 5. INTERFAZ ---
+    tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 VALIDACIÓN"])
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
-        st.dataframe(df_vista[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_PROY_MENSUAL', 'MOS']]
-                     .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
+        st.dataframe(df_vista[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_MENSUAL', 'MOS']]
+                     .sort_values('VTA_MENSUAL', ascending=False), use_container_width=True)
 
     with tab3:
-        st.subheader("🔮 Validación de Proyección")
-        total_proy = df_vista['VTA_PROY_ANUAL'].sum()
-        st.write(f"Venta Proyectada Anual para esta vista: **{total_proyectado:,.0f}**")
-        st.write(f"Peso sobre el objetivo total: **{(total_proy/vol_obj):.1%}**")
+        st.subheader("🔮 Resumen de Proyección")
+        # Aquí sumamos la proyección de lo que está en pantalla
+        suma_proy = df_vista['VTA_PROY_2026'].sum()
+        st.metric("Total Proyectado en esta vista", f"{suma_proy:,.0f} u.")
+        st.write(f"Esta selección representa el **{(suma_proy/vol_obj):.1%}** del objetivo global de {vol_obj:,.0f}.")
+        
+        if validar_fijar:
+            st.success("Los valores están blindados contra el total de la empresa.")
+        else:
+            st.warning("Los valores están forzados a sumar el objetivo solo con los SKUs visibles.")
+
+else:
+    st.error("No se detectaron datos. Verifica st.secrets.")
