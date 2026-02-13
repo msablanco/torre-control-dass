@@ -174,10 +174,10 @@ if data:
         return "✅ SALUDABLE"
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
-# --- 5. MOTOR DE CÁLCULO (FUERA DE LAS PESTAÑAS) ---
+# --- 5. MOTOR DE CÁLCULO UNIFICADO (PRE-TABS) ---
     meses_nombres = {'01':'Ene','02':'Feb','03':'Mar','04':'Abr','05':'May','06':'Jun','07':'Jul','08':'Ago','09':'Sep','10':'Oct','11':'Nov','12':'Dic'}
     
-    # Cálculo de Venta e Ingresos para Matriz de Salud
+    # Cálculos globales
     vta_tot_25 = so_filt[so_filt['AÑO'] == 2025]['CANTIDAD'].sum()
     factor_escala = target_vol / vta_tot_25 if vta_tot_25 > 0 else 1
     
@@ -189,7 +189,6 @@ if data:
     else:
         ing_futuros = pd.DataFrame(columns=['SKU', 'ING_FUTUROS'])
 
-    # Creación de Tabla Master Tactical
     tactical = m_filt.merge(stk_sku, on='SKU', how='left').merge(vta_sku_25, on='SKU', how='left').merge(ing_futuros, on='SKU', how='left').fillna(0)
     tactical['VTA_PROY_MENSUAL'] = ((tactical['CANTIDAD'] * factor_escala) / 12).round(0)
     
@@ -207,7 +206,7 @@ if data:
     
     tactical['ESTADO'] = tactical.apply(clasificar_salud, axis=1)
 
-   # --- 6. RENDERIZADO DE TABS (CON CLAVES ÚNICAS PARA EVITAR DUPLICADOS) ---
+    # --- 6. RENDERIZADO DE TABS (CON KEYS ÚNICAS) ---
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE & PROYECCIÓN", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS SKU"])
 
     with tab1:
@@ -229,8 +228,8 @@ if data:
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['CANTIDAD'], name="Sell Out 2025", line=dict(color='#ff7f0e', dash='dot')))
         fig_perf.add_trace(go.Scatter(x=df_plot['MES_NOM'], y=df_plot['PROY_2026'], name="Proyección 2026", line=dict(color='#2ecc71', width=4)))
         
-        # AGREGAMOS KEY ÚNICA
-        st.plotly_chart(fig_perf, use_container_width=True, key="chart_performance_main")
+        # KEY ÚNICA PARA EL GRÁFICO 1
+        st.plotly_chart(fig_perf, use_container_width=True, key="grafico_performance_principal")
 
         st.markdown("### 📋 Detalle Mensual")
         df_t1 = df_plot[['MES_NOM', 'UNIDADES', 'CANTIDAD', 'PROY_2026']].copy()
@@ -248,14 +247,14 @@ if data:
         c3.metric("MOS Promedio", f"{mos_m:.1f} meses")
 
         cols_f = ['SKU', 'DESCRIPCION', 'DISCIPLINA', 'STK_ACTUAL', 'ING_FUTUROS', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']
-        # Eliminamos el índice numérico para que la tabla sea limpia
         st.dataframe(tactical[cols_f].sort_values('VTA_PROY_MENSUAL', ascending=False).set_index('SKU'), use_container_width=True)
 
     with tab3:
         st.subheader("🔮 Línea de Tiempo de Oportunidad")
         sku_list = tactical.sort_values('VTA_PROY_MENSUAL', ascending=False)['SKU'].unique()
-        # Buscador específico de la solapa 3
-        sku_sel = st.selectbox("Seleccionar SKU para análisis de flujo", sku_list, key="selector_sku_tab3")
+        
+        # KEY ÚNICA PARA EL SELECTOR
+        sku_sel = st.selectbox("Seleccionar SKU para análisis", sku_list, key="selector_sku_proyeccion")
         
         if sku_sel:
             dat = tactical[tactical['SKU'] == sku_sel].iloc[0]
@@ -276,10 +275,10 @@ if data:
             fig_stk.add_trace(go.Bar(x=mes_eje, y=[ing_m.get(str(i).zfill(2), 0) for i in range(1, 13)], name="Ingresos 2026", marker_color='#2ecc71', opacity=0.7))
             fig_stk.add_hline(y=dat['VTA_PROY_MENSUAL']*2, line_dash="dash", line_color="gray", annotation_text="Seguridad")
             
-            fig_stk.update_layout(title=f"Flujo de Stock Proyectado: {sku_sel}", hovermode="x unified")
+            fig_stk.update_layout(title=f"Flujo Proyectado: {sku_sel}", hovermode="x unified")
             
-            # AGREGAMOS OTRA KEY ÚNICA
-            st.plotly_chart(fig_stk, use_container_width=True, key="chart_sku_timeline")
+            # KEY ÚNICA PARA EL GRÁFICO 2
+            st.plotly_chart(fig_stk, use_container_width=True, key="grafico_agotamiento_sku")
             
             if min(stk_ev) == 0:
                 st.error(f"⚠️ El SKU {sku_sel} entrará en quiebre total.")
