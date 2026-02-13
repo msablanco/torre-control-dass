@@ -46,92 +46,68 @@ data = load_drive_data()
 
 if data:
     maestro = data.get('Maestro_Productos', pd.DataFrame())
-    sell_in = data.get('Sell_In_Ventas', pd.DataFrame())
     sell_out = data.get('Sell_Out', pd.DataFrame())
     stock = data.get('Stock', pd.DataFrame())
-    ingresos = data.get('Ingresos', pd.DataFrame())
 
-    for df in [sell_in, sell_out, ingresos]:
-        if not df.empty:
-            col_f = next((c for c in df.columns if 'FECHA' in c or 'MES' in c), None)
-            if col_f:
-                df['FECHA_DT'] = pd.to_datetime(df[col_f], dayfirst=True, errors='coerce')
-                df['MES_STR'] = df['FECHA_DT'].dt.strftime('%m')
-                df['AÑO'] = df['FECHA_DT'].dt.year
+    # Formateo de fechas
+    if not sell_out.empty:
+        col_f = next((c for c in sell_out.columns if 'FECHA' in c or 'MES' in c), None)
+        sell_out['FECHA_DT'] = pd.to_datetime(sell_out[col_f], dayfirst=True, errors='coerce')
+        sell_out['AÑO'] = sell_out['FECHA_DT'].dt.year
 
-    # --- SIDEBAR: PARÁMETROS ---
+    # --- SIDEBAR ---
     st.sidebar.title("🎮 PARÁMETROS")
     search_query = st.sidebar.text_input("🔍 Buscar SKU o Descripción", "").upper()
     target_vol = st.sidebar.slider("Volumen Total Objetivo 2026", 100000, 2000000, 700000, step=50000)
     
-    opciones_emp = sorted(list(set(sell_in['EMPRENDIMIENTO'].dropna().unique()) | set(sell_out['EMPRENDIMIENTO'].dropna().unique())))
+    opciones_emp = sorted(sell_out['EMPRENDIMIENTO'].dropna().unique())
     f_emp = st.sidebar.multiselect("Emprendimiento (Canal)", opciones_emp)
-    f_cli = st.sidebar.multiselect("Clientes", sell_in['CLIENTE_NAME'].unique() if 'CLIENTE_NAME' in sell_in.columns else [])
 
-    # --- 1. CÁLCULO DEL FACTOR DE ESCALA (ANCLADO AL CANAL) ---
-    # Esto evita que la proyección se dispare al filtrar SKUs.
-    so_2025_full_canal = sell_out[sell_out['AÑO'] == 2025].copy()
+    # --- 1. CÁLCULO DEL DENOMINADOR ESTÁTICO (EL TRUCO) ---
+    # Calculamos la venta 2025 de TODO el canal seleccionado, IGNORANDO el buscador de SKU
+    so_canal_full = sell_out[sell_out['AÑO'] == 2025].copy()
     if f_emp:
-        so_2025_full_canal = so_2025_full_canal[so_2025_full_canal['EMPRENDIMIENTO'].isin(f_emp)]
+        so_canal_full = so_canal_full[so_canal_full['EMPRENDIMIENTO'].isin(f_emp)]
     
-    total_venta_canal_2025 = so_2025_full_canal['CANTIDAD'].sum()
-    # El factor se basa en el TOTAL del canal, no en lo que ves en pantalla
-    FACTOR_REAL = target_vol / total_venta_canal_2025 if total_venta_canal_2025 > 0 else 1
+    venta_base_canal = so_canal_full['CANTIDAD'].sum()
+    # Factor de escala único para el canal
+    FACTOR_REAL = target_vol / venta_base_canal if venta_base_canal > 0 else 1
 
-    # --- 2. FILTRADO PARA LA VISTA ---
+    # --- 2. FILTRADO PARA LA TABLA (VISTA) ---
     m_filt = maestro.copy()
     if search_query: 
         m_filt = m_filt[m_filt['SKU'].str.contains(search_query) | m_filt['DESCRIPCION'].str.contains(search_query)]
     
-    # Agrupamos datos para eliminar duplicados de SKUs
-    so_vta = sell_out[(sell_out['AÑO'] == 2025) & (sell_out['SKU'].isin(m_filt['SKU']))]
-    if f_emp: so_vta = so_vta[so_vta['EMPRENDIMIENTO'].isin(f_emp)]
-    
-    vta_agrupada = so_vta.groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_2025'})
-    stk_agrupado = stock[stock['SKU'].isin(m_filt['SKU'])].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
+    # Agrupamos por SKU para eliminar duplicados
+    stk_sku = stock[stock['SKU'].isin(m_filt['SKU'])].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'STOCK'})
+    vta_sku = so_canal_full[so_canal_full['SKU'].isin(m_filt['SKU'])].groupby('SKU')['CANTIDAD'].sum().reset_index().rename(columns={'CANTIDAD': 'VTA_25'})
 
-    # Unión final para la tabla Tactical
-    tactical = m_filt.drop_duplicates(subset=['SKU']).merge(stk_agrupado, on='SKU', how='left') \
-                     .merge(vta_agrupada, on='SKU', how='left').fillna(0)
+    # Unión de tabla Tactical
+    tactical = m_filt.drop_duplicates(subset=['SKU']).merge(stk_sku, on='SKU', how='left').merge(vta_sku, on='SKU', how='left').fillna(0)
     
-    # Cálculos corregidos
-    tactical['VTA_PROY_2026'] = (tactical['VTA_2025'] * FACTOR_REAL).round(0)
+    # Cálculos basados en el factor real del CANAL
+    tactical['VTA_PROY_2026'] = (tactical['VTA_25'] * FACTOR_REAL).round(0)
     tactical['VTA_PROY_MENSUAL'] = (tactical['VTA_PROY_2026'] / 12).round(0)
     
-    # MOS blindado contra ceros e infinitos
+    # MOS corregido contra -inf
     tactical['MOS'] = (tactical['STOCK'] / tactical['VTA_PROY_MENSUAL']).replace([float('inf'), float('-inf')], 0).fillna(0).round(1)
     
-    def clasificar_estado(r):
-        if r['VTA_PROY_MENSUAL'] == 0: return "✅ SIN DEMANDA"
-        return "🔥 QUIEBRE" if r['MOS'] < 2.5 else ("⚠️ SOBRE-STOCK" if r['MOS'] > 8 else "✅ SALUDABLE")
-    
-    tactical['ESTADO'] = tactical.apply(clasificar_estado, axis=1)
-
     tab1, tab2, tab3 = st.tabs(["📊 PERFORMANCE", "⚡ TACTICAL (MOS)", "🔮 ESCENARIOS"])
 
     with tab2:
         st.subheader("⚡ Matriz de Salud de Inventario (MOS)")
         
-        # Filtro para no mostrar SKUs sin stock ni venta
-        df_display = tactical[(tactical['STOCK'] > 0) | (tactical['VTA_2025'] > 0)].copy()
-        
-        # KPIs Superiores Corregidos
+        # KPIs Superiores
         c1, c2, c3 = st.columns(3)
-        c1.metric("SKUs en Riesgo", len(df_display[df_display['ESTADO'] == "🔥 QUIEBRE"]))
-        c2.metric("SKUs con Exceso", len(df_display[df_display['ESTADO'] == "⚠️ SOBRE-STOCK"]))
+        c1.metric("SKUs Filtrados", len(tactical))
         
-        # Promedio MOS sin errores de -inf
-        promedio_mos = df_display[df_display['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
+        promedio_mos = tactical[tactical['VTA_PROY_MENSUAL'] > 0]['MOS'].mean()
         c3.metric("Stock Promedio (MOS)", f"{promedio_mos:.1f} meses" if not pd.isna(promedio_mos) else "0.0 meses")
 
-        st.dataframe(df_display[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_2025', 'VTA_PROY_MENSUAL', 'MOS', 'ESTADO']]
+        st.dataframe(tactical[['SKU', 'DESCRIPCION', 'STOCK', 'VTA_25', 'VTA_PROY_MENSUAL', 'MOS']]
                      .sort_values('VTA_PROY_MENSUAL', ascending=False), use_container_width=True)
 
     with tab3:
-        st.subheader("🔮 Detalle por SKU")
-        sku_list = tactical[tactical['VTA_2025'] > 0]['SKU'].unique()
-        if len(sku_list) > 0:
-            sku_sel = st.selectbox("Seleccionar SKU", sku_list)
-            # Aquí el código ya no dará NameError porque 'tactical' se definió arriba
-        else:
-            st.info("No hay datos de proyección para los filtros actuales.")
+        st.subheader("🔮 Línea de Tiempo")
+        # Definir tactical antes evita el NameError
+        st.write("Selecciona un SKU en la tabla para ver su detalle.")
